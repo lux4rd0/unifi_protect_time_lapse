@@ -84,24 +84,35 @@ class FetchImage:
         # Get timeout for this interval
         timeout = self.interval_timeouts[interval]
 
-        # Configure ffmpeg for Unifi Protect's RTSPS stream
+        # Base ffmpeg command
         ffmpeg_command = [
             "ffmpeg",
             "-rtsp_transport",
             "tcp",  # Use TCP for RTSP transport
             "-i",
             rtsps_url,
-            "-frames:v",
-            "1",  # Capture a single frame
-            "-f",
-            "image2",  # Output format is an image
-            "-pix_fmt",
-            "rgb24",  # Full RGB colorspace without subsampling
-            "-compression_level",
-            "1",  # Good balance of quality vs size for PNG
-            filepath,  # Already has .png extension
-            "-y",  # Overwrite output file if it exists
         ]
+
+        # Add capture technique specific arguments
+        ffmpeg_command.extend(
+            config.UNIFI_PROTECT_TIME_LAPSE_ACTIVE_TECHNIQUE["ffmpeg_extra_args"]
+        )
+
+        # Add output arguments
+        ffmpeg_command.extend(
+            [
+                "-frames:v",
+                "1",
+                "-f",
+                "image2",
+                "-pix_fmt",
+                "rgb24",
+                "-compression_level",
+                "1",
+                filepath,
+                "-y",
+            ]
+        )
 
         attempt = 0
         while attempt <= self.max_retries:
@@ -124,8 +135,12 @@ class FetchImage:
                         and os.path.exists(filepath)
                         and os.path.getsize(filepath) > 0
                     ):
+                        # Log which capture technique was used
+                        technique_name = (
+                            config.UNIFI_PROTECT_TIME_LAPSE_CAPTURE_TECHNIQUE
+                        )
                         logging.info(
-                            f"{interval}s: Captured image from {camera_name} in {fetch_time:.2f}s"
+                            f"{interval}s: Captured image from {camera_name} in {fetch_time:.2f}s using {technique_name} technique"
                         )
                         return True
                     else:

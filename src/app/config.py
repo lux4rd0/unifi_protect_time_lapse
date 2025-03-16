@@ -187,6 +187,54 @@ UNIFI_PROTECT_TIME_LAPSE_FFMPEG_CONCURRENT_CREATION = int(
 )
 
 # =============================================================================
+# FFMPEG CAPTURE TECHNIQUES
+# =============================================================================
+
+# Frame capture technique (options: "standard", "iframe", "blend")
+UNIFI_PROTECT_TIME_LAPSE_CAPTURE_TECHNIQUE = os.getenv(
+    "UNIFI_PROTECT_TIME_LAPSE_CAPTURE_TECHNIQUE", "standard"
+).lower()
+
+# Number of frames to blend (when using "blend" technique)
+UNIFI_PROTECT_TIME_LAPSE_BLEND_FRAMES = int(
+    os.getenv("UNIFI_PROTECT_TIME_LAPSE_BLEND_FRAMES", "2")
+)
+
+# Maximum wait time for I-frame in seconds (when using "iframe" technique)
+UNIFI_PROTECT_TIME_LAPSE_IFRAME_TIMEOUT = float(
+    os.getenv("UNIFI_PROTECT_TIME_LAPSE_IFRAME_TIMEOUT", "2.0")
+)
+
+# Capture technique configurations
+UNIFI_PROTECT_TIME_LAPSE_CAPTURE_TECHNIQUES = {
+    "standard": {
+        "description": "Standard single frame capture",
+        "ffmpeg_extra_args": [],
+    },
+    "iframe": {
+        "description": "Selects only I-frames for higher quality",
+        "ffmpeg_extra_args": ["-vf", "select='eq(pict_type,I)'", "-vsync", "vfr"],
+    },
+    "blend": {
+        "description": "Blends multiple frames to reduce motion blur",
+        "ffmpeg_extra_args": [
+            "-filter_complex",
+            "[0:v]tblend=all_mode=average[out]",
+            "-map",
+            "[out]",
+        ],
+    },
+}
+
+# Get the active capture technique configuration
+UNIFI_PROTECT_TIME_LAPSE_ACTIVE_TECHNIQUE = (
+    UNIFI_PROTECT_TIME_LAPSE_CAPTURE_TECHNIQUES.get(
+        UNIFI_PROTECT_TIME_LAPSE_CAPTURE_TECHNIQUE,
+        UNIFI_PROTECT_TIME_LAPSE_CAPTURE_TECHNIQUES["standard"],
+    )
+)
+
+# =============================================================================
 # FFMPEG VIDEO QUALITY PRESETS
 # =============================================================================
 
