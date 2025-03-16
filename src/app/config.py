@@ -321,3 +321,8 @@ UNIFI_PROTECT_TIME_LAPSE_CREATION_TIME = os.getenv(
 UNIFI_PROTECT_TIME_LAPSE_DAYS_AGO = int(
     os.getenv("UNIFI_PROTECT_TIME_LAPSE_DAYS_AGO", "1")
 )
+
+# Maximum sleep interval before logging status (in seconds)
+UNIFI_PROTECT_TIME_LAPSE_MAX_SLEEP_INTERVAL = int(
+    os.getenv("UNIFI_PROTECT_TIME_LAPSE_MAX_SLEEP_INTERVAL", "3600")
+)

@@ -79,8 +79,8 @@ async def run_timelapse_creation():
                 f"Time-lapse: Sleeping until {next_run_time.strftime('%Y-%m-%d %H:%M:%S')} (in {human_readable_sleep_duration})."
             )
             await asyncio.sleep(
-                min(sleep_duration, 300)
-            )  # Sleep in intervals of 5 minutes or less
+                min(sleep_duration, config.UNIFI_PROTECT_TIME_LAPSE_MAX_SLEEP_INTERVAL)
+            )
 
         # Time to create timelapse
         start_time = datetime.now()
