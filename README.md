@@ -56,10 +56,6 @@ services:
       UNIFI_PROTECT_TIME_LAPSE_OPTIMIZE_INTERVAL_FETCHING: 'true'
       UNIFI_PROTECT_TIME_LAPSE_HOURLY_SUMMARY_ENABLED: 'true'
       UNIFI_PROTECT_TIME_LAPSE_SUMMARY_INTERVAL_SECONDS: '3600'
-      
-      # Registry coordination settings
-      UNIFI_PROTECT_TIME_LAPSE_REGISTRY_WINDOW: '7200'  # 2 hours registry retention
-      UNIFI_PROTECT_TIME_LAPSE_WAIT_TIMEOUT: '20'       # 20 seconds max wait for source capture
 ```
 
 2. Replace `your-protect-host.example.com` with your Protect system's hostname
@@ -77,6 +73,8 @@ services:
 | `UNIFI_PROTECT_TIME_LAPSE_CAMERAS_CONFIG` | JSON array of camera configurations | - | See below |
 | `UNIFI_PROTECT_TIME_LAPSE_DAYS_AGO` | Number of days ago to process for time-lapse creation | `1` | `0` |
 | `UNIFI_PROTECT_TIME_LAPSE_CREATION_TIME` | Time of day to create time-lapses (24-hour format) | `01:00` | `03:30` |
+| `UNIFI_PROTECT_TIME_LAPSE_MAX_SLEEP_INTERVAL` | Maximum seconds between time-lapse status log messages | `3600` | `300` |
+
 
 **Note**: Fetch intervals are no longer configured using a separate environment variable. Instead, they are automatically derived from the `intervals` array specified for each camera in the `UNIFI_PROTECT_TIME_LAPSE_CAMERAS_CONFIG`.
 
@@ -101,8 +99,6 @@ Example:
 | Variable | Description | Default | Example |
 |----------|-------------|---------|---------|
 | `UNIFI_PROTECT_TIME_LAPSE_OPTIMIZE_INTERVAL_FETCHING` | Enable automatic copying between intervals | `true` | `false` |
-| `UNIFI_PROTECT_TIME_LAPSE_REGISTRY_WINDOW` | Duration in seconds to keep capture registry entries | `7200` | `3600` |
-| `UNIFI_PROTECT_TIME_LAPSE_WAIT_TIMEOUT` | Maximum seconds to wait for source capture before falling back | `20` | `30` |
 | `UNIFI_PROTECT_TIME_LAPSE_HOURLY_SUMMARY_ENABLED` | Enable periodic summary logs | `true` | `false` |
 | `UNIFI_PROTECT_TIME_LAPSE_SUMMARY_INTERVAL_SECONDS` | Seconds between summary logs | `3600` | `1800` |
 
@@ -184,18 +180,7 @@ This provides several benefits:
 - Speeds up processing
 - Maintains proper timing across all intervals
 
-The system uses a coordinated approach where:
-1. Smaller intervals register captures as they complete
-2. Larger intervals explicitly wait for smaller interval captures to be ready
-3. If a source capture isn't ready within a configurable timeout, it falls back to direct capture
-
-This ensures files are never copied before they exist, eliminating "file not found" errors and providing maximum reliability.
-
-The registry system is fully configurable through:
-- `UNIFI_PROTECT_TIME_LAPSE_REGISTRY_WINDOW`: How long to maintain the capture registry (defaults to 2 hours)
-- `UNIFI_PROTECT_TIME_LAPSE_WAIT_TIMEOUT`: Maximum time to wait for a source capture (defaults to 20 seconds)
-
-For very long intervals (e.g., hours), you may need to increase the registry window to ensure proper coordination.
+The summary logs will show how many images were freshly captured versus copied from other intervals.
 
 ### Detailed Status Summaries
 
@@ -333,12 +318,3 @@ services:
 - If interval optimization is causing timing issues, verify that the intervals are proper multiples of each other
 - For complex interval patterns, you may need to disable optimization by setting `UNIFI_PROTECT_TIME_LAPSE_OPTIMIZE_INTERVAL_FETCHING` to `false`
 - Check the summary logs to see if images are being properly copied between intervals
-
-### Registry Coordination Issues
-
-- If larger intervals regularly fall back to direct capture with "waiting for source timed out" messages:
-  - Increase `UNIFI_PROTECT_TIME_LAPSE_WAIT_TIMEOUT` to allow more time for smaller intervals to complete
-  - Check that your server has sufficient resources to handle all camera captures within the wait timeout
-  - Consider staggering your intervals more (e.g., use 60s and 300s instead of 60s and 180s)
-- For very long intervals (hourly or longer):
-  - Increase `UNIFI_PROTECT_TIME_LAPSE_REGISTRY_WINDOW` to at least 2x your longest interval
