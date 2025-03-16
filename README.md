@@ -93,6 +93,14 @@ Example:
 | `UNIFI_PROTECT_TIME_LAPSE_CUSTOM_PIX_FMT` | Custom pixel format | `yuv420p` | `yuv444p` |
 | `UNIFI_PROTECT_TIME_LAPSE_CUSTOM_COLOR_SETTINGS` | Use explicit color space settings | `false` | `true` |
 
+### Capture Technique Settings
+
+| Variable | Description | Default | Example |
+|----------|-------------|---------|---------|
+| `UNIFI_PROTECT_TIME_LAPSE_CAPTURE_TECHNIQUE` | Frame capture technique (`standard`, `iframe`, or `blend`) | `standard` | `iframe` |
+| `UNIFI_PROTECT_TIME_LAPSE_IFRAME_TIMEOUT` | Maximum time to wait for an I-frame in seconds (only used with `iframe` technique) | `2.0` | `3.0` |
+| `UNIFI_PROTECT_TIME_LAPSE_BLEND_FRAMES` | Number of frames to blend together (only used with `blend` technique) | `2` | `3` |
+
 ### Path Configuration
 
 | Variable | Description | Default | Example |
@@ -156,6 +164,38 @@ The application offers three quality presets for video generation:
 
 3. **custom**: Define your own settings using the custom environment variables
 
+### Frame Capture Techniques
+
+The application offers three techniques for capturing frames from RTSP streams:
+
+1. **standard** (default): Captures a single frame directly from the stream
+   - Simple and fast
+   - May show motion blur in high-movement scenarios
+
+2. **iframe**: Only captures I-frames (keyframes) from the stream
+   - Higher quality images with less compression artifacts
+   - Reduces motion blur in windy conditions
+   - May take slightly longer to capture as it waits for an I-frame
+
+3. **blend**: Blends multiple consecutive frames together
+   - Reduces motion blur by averaging movement
+   - Good for cameras mounted on unstable surfaces
+   - Requires more processing time
+
+Example configuration for a camera with high movement:
+
+```yaml
+UNIFI_PROTECT_TIME_LAPSE_CAPTURE_TECHNIQUE: 'iframe'
+UNIFI_PROTECT_TIME_LAPSE_IFRAME_TIMEOUT: '2.0'
+```
+
+For very unstable cameras, the blend technique may work better:
+
+```yaml
+UNIFI_PROTECT_TIME_LAPSE_CAPTURE_TECHNIQUE: 'blend'
+UNIFI_PROTECT_TIME_LAPSE_BLEND_FRAMES: '2'
+```
+
 ### Multiple Site Deployment
 
 To monitor multiple Protect sites, create separate Docker Compose configurations for each site:
@@ -189,3 +229,10 @@ services:
 - Verify your network allows connections to the RTSPS port
 - Check that your Protect system has RTSP enabled
 - Try increasing the timeout percentage
+
+### Motion Blur in Captured Images
+
+- If cameras show motion blur (common in windy conditions), try using the `iframe` capture technique
+- For severe cases, the `blend` technique may provide better results
+- Check the container logs to verify which technique is being used
+- Adjust timeouts as needed for your specific environment
