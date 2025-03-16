@@ -12,7 +12,7 @@ async def run_timelapse_creation():
     while True:
         now = datetime.now()
         creation_time = datetime.strptime(
-            config.UNIFI_TIME_LAPSE_CREATION_TIME, "%H:%M"
+            config.UNIFI_PROTECT_TIME_LAPSE_CREATION_TIME, "%H:%M"
         )
         creation_hour, creation_minute = creation_time.hour, creation_time.minute
 
@@ -51,7 +51,7 @@ async def run_timelapse_creation():
         # Run timelapse creation
         time_lapse_creator = CreateTimeLapse()
         await time_lapse_creator.create_time_lapse_for_days_ago(
-            config.UNIFI_TIME_LAPSE_DAYS_AGO
+            config.UNIFI_PROTECT_TIME_LAPSE_DAYS_AGO
         )
 
         end_time = datetime.now()
@@ -78,16 +78,16 @@ async def keep_alive():
 
 async def main():
     logging.basicConfig(
-        level=config.UNIFI_TIME_LAPSE_LOGGING_LEVEL,
+        level=config.UNIFI_PROTECT_TIME_LAPSE_LOGGING_LEVEL,
         format="%(asctime)s - %(levelname)s - %(message)s",
     )
 
-    logging.info("Starting Unifi Time-lapse Service")
+    logging.info("Starting Unifi Protect Time-lapse Service")
 
     tasks = []
 
     # Start image fetching in background if enabled
-    if config.UNIFI_TIME_LAPSE_FETCH_IMAGE_ENABLED:
+    if config.UNIFI_PROTECT_TIME_LAPSE_FETCH_IMAGE_ENABLED:
         fetcher = FetchImage()
         image_fetch_task = asyncio.create_task(fetcher.run())
         tasks.append(image_fetch_task)
@@ -96,7 +96,7 @@ async def main():
         logging.info("Fetch Image: Task is disabled and will not start.")
 
     # Schedule timelapse creation if enabled
-    if config.UNIFI_TIME_LAPSE_CREATE_TIMELAPSE_ENABLED:
+    if config.UNIFI_PROTECT_TIME_LAPSE_CREATE_TIMELAPSE_ENABLED:
         timelapse_creation_task = asyncio.create_task(run_timelapse_creation())
         tasks.append(timelapse_creation_task)
         logging.info("Time-lapse: Creation task is enabled and scheduled.")

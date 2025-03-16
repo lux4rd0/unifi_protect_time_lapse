@@ -11,19 +11,19 @@ import time
 
 # Configuring logging
 logging.basicConfig(
-    level=config.UNIFI_TIME_LAPSE_LOGGING_LEVEL,
+    level=config.UNIFI_PROTECT_TIME_LAPSE_LOGGING_LEVEL,
     format="%(asctime)s - %(levelname)s - %(message)s",
 )
 
 
 class FetchImage:
     def __init__(self):
-        self.image_output_path = config.UNIFI_TIME_LAPSE_IMAGE_OUTPUT_PATH
-        self.intervals = config.UNIFI_TIME_LAPSE_FETCH_INTERVALS
-        self.interval_timeouts = config.UNIFI_TIME_LAPSE_INTERVAL_TIMEOUTS
-        self.cameras_by_interval = config.UNIFI_TIME_LAPSE_CAMERAS_BY_INTERVAL
-        self.max_retries = config.UNIFI_TIME_LAPSE_FETCH_MAX_RETRIES
-        self.retry_delay = config.UNIFI_TIME_LAPSE_FETCH_RETRY_DELAY
+        self.image_output_path = config.UNIFI_PROTECT_TIME_LAPSE_IMAGE_OUTPUT_PATH
+        self.intervals = config.UNIFI_PROTECT_TIME_LAPSE_FETCH_INTERVALS
+        self.interval_timeouts = config.UNIFI_PROTECT_TIME_LAPSE_INTERVAL_TIMEOUTS
+        self.cameras_by_interval = config.UNIFI_PROTECT_TIME_LAPSE_CAMERAS_BY_INTERVAL
+        self.max_retries = config.UNIFI_PROTECT_TIME_LAPSE_FETCH_MAX_RETRIES
+        self.retry_delay = config.UNIFI_PROTECT_TIME_LAPSE_FETCH_RETRY_DELAY
 
         # Log configuration summary
         logging.info(
@@ -69,7 +69,7 @@ class FetchImage:
             bool: True if successful, False otherwise
         """
         # Get camera RTSPS URL
-        rtsps_url = config.UNIFI_TIME_LAPSE_get_camera_rtsps_url(camera_name)
+        rtsps_url = config.UNIFI_PROTECT_TIME_LAPSE_get_camera_rtsps_url(camera_name)
         if not rtsps_url:
             logging.warning(
                 f"No stream configuration for camera: {camera_name}. Skipping."
@@ -204,7 +204,10 @@ class FetchImage:
         seconds_to_next = interval - (seconds_since_minute % interval)
 
         # If we need to align to the top of the minute and this is a multiple of 60
-        if config.UNIFI_TIME_LAPSE_FETCH_TOP_OF_THE_MINUTE and interval % 60 == 0:
+        if (
+            config.UNIFI_PROTECT_TIME_LAPSE_FETCH_TOP_OF_THE_MINUTE
+            and interval % 60 == 0
+        ):
             # Align to the next minute boundary
             next_execution_time = now + datetime.timedelta(
                 seconds=60 - now.second, microseconds=-now.microsecond

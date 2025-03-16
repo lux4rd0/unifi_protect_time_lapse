@@ -18,11 +18,11 @@ import config
 class CreateTimeLapse:
     def __init__(self):
         logging.basicConfig(
-            level=config.UNIFI_TIME_LAPSE_LOGGING_LEVEL,
+            level=config.UNIFI_PROTECT_TIME_LAPSE_LOGGING_LEVEL,
             format="%(asctime)s - %(levelname)s - %(message)s",
         )
         self.semaphore = asyncio.Semaphore(
-            config.UNIFI_TIME_LAPSE_FFMPEG_CONCURRENT_CREATION
+            config.UNIFI_PROTECT_TIME_LAPSE_FFMPEG_CONCURRENT_CREATION
         )  # Semaphore to ensure sequential execution
 
     async def format_file_size(self, size_in_bytes):  # Make it an asynchronous method
@@ -51,15 +51,15 @@ class CreateTimeLapse:
             date_month = date.strftime("%m")
             date_day = date.strftime("%d")
 
-            frame_rate = config.UNIFI_TIME_LAPSE_FFMPEG_FRAME_RATE
+            frame_rate = config.UNIFI_PROTECT_TIME_LAPSE_FFMPEG_FRAME_RATE
             ffmpeg_loglevel = (
                 "error" if logging.getLogger().level <= logging.INFO else "info"
             )
 
-            for interval in config.UNIFI_TIME_LAPSE_FETCH_INTERVALS:
+            for interval in config.UNIFI_PROTECT_TIME_LAPSE_FETCH_INTERVALS:
                 interval_str = f"{interval}s"
                 image_path = (
-                    Path(config.UNIFI_TIME_LAPSE_IMAGE_OUTPUT_PATH)
+                    Path(config.UNIFI_PROTECT_TIME_LAPSE_IMAGE_OUTPUT_PATH)
                     / camera_name
                     / interval_str
                     / date_year
@@ -67,7 +67,7 @@ class CreateTimeLapse:
                     / date_day
                 )
                 video_path = (
-                    Path(config.UNIFI_TIME_LAPSE_VIDEO_OUTPUT_PATH)
+                    Path(config.UNIFI_PROTECT_TIME_LAPSE_VIDEO_OUTPUT_PATH)
                     / date_year
                     / date_month
                     / camera_name
@@ -109,7 +109,9 @@ class CreateTimeLapse:
                 video_path.mkdir(parents=True, exist_ok=True)
 
                 overwrite_flag = (
-                    "-y" if config.UNIFI_TIME_LAPSE_FFMPEG_OVERWRITE_FILE else "-n"
+                    "-y"
+                    if config.UNIFI_PROTECT_TIME_LAPSE_FFMPEG_OVERWRITE_FILE
+                    else "-n"
                 )
                 output_file = (
                     video_path
@@ -120,7 +122,7 @@ class CreateTimeLapse:
                 input_pattern = str(image_path / f"{camera_name}_*.png")
 
                 # Get active preset settings
-                preset_config = config.UNIFI_TIME_LAPSE_ACTIVE_PRESET
+                preset_config = config.UNIFI_PROTECT_TIME_LAPSE_ACTIVE_PRESET
                 crf = preset_config["crf"]
                 preset_speed = preset_config["preset"]
                 pix_fmt = preset_config["pix_fmt"]
@@ -175,7 +177,7 @@ class CreateTimeLapse:
 
                 # Log the quality preset being used
                 logging.info(
-                    f"Using video quality preset: {config.UNIFI_TIME_LAPSE_VIDEO_QUALITY_PRESET} (CRF: {crf}, Preset: {preset_speed}, Format: {pix_fmt})"
+                    f"Using video quality preset: {config.UNIFI_PROTECT_TIME_LAPSE_VIDEO_QUALITY_PRESET} (CRF: {crf}, Preset: {preset_speed}, Format: {pix_fmt})"
                 )
 
                 start_time = time.time()
@@ -212,7 +214,9 @@ class CreateTimeLapse:
                             f"Successfully created time-lapse for {camera_name} in {human_readable_duration}. File size: {formatted_size}."
                         )
 
-                        if config.UNIFI_TIME_LAPSE_FFMPEG_DELETE_IMAGES_AFTER_SUCCESS:
+                        if (
+                            config.UNIFI_PROTECT_TIME_LAPSE_FFMPEG_DELETE_IMAGES_AFTER_SUCCESS
+                        ):
                             try:
                                 shutil.rmtree(image_path)
                                 logging.info(
@@ -233,7 +237,7 @@ class CreateTimeLapse:
         self, days_ago
     ):  # Make it an asynchronous method
         tasks = []
-        for camera in config.UNIFI_TIME_LAPSE_CAMERAS:
+        for camera in config.UNIFI_PROTECT_TIME_LAPSE_CAMERAS:
             camera_name = camera["name"] if isinstance(camera, dict) else camera
             logging.info(f"Creating time-lapse for camera: {camera_name}")
             task = asyncio.create_task(
@@ -244,7 +248,7 @@ class CreateTimeLapse:
 
 
 def main():
-    days_ago = config.UNIFI_TIME_LAPSE_DAYS_AGO
+    days_ago = config.UNIFI_PROTECT_TIME_LAPSE_DAYS_AGO
     time_lapse_creator = CreateTimeLapse()
     asyncio.run(
         time_lapse_creator.create_time_lapse_for_days_ago(days_ago)
