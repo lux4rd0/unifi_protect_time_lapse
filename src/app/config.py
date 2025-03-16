@@ -20,15 +20,12 @@ UNIFI_PROTECT_TIME_LAPSE_PROTECT_PORT = os.getenv(
 
 # Default camera configuration with name, stream ID, and intervals
 UNIFI_PROTECT_TIME_LAPSE_DEFAULT_CAMERAS = [
-    {"name": "cam-frontdoor", "stream_id": "TFVpXM4DAyGapebX", "intervals": [15, 60]},
+    {"name": "cam-back", "stream_id": "abc123", "intervals": [15, 60]},
     {
-        "name": "cam-frontdoor-package",
-        "stream_id": "gOoCY8Pr5khRYlIB",
+        "name": "cam-front",
+        "stream_id": "def456",
         "intervals": [60],
     },
-    {"name": "cam-garage", "stream_id": "GW50AIMl297qJoWz", "intervals": [15, 60]},
-    {"name": "cam-pergolanorth", "stream_id": "MYi7kYR0MxtBHDwT", "intervals": [60]},
-    {"name": "cam-pergolasouth", "stream_id": "oV7cyxBPwX6u1pUJ", "intervals": [60]},
 ]
 
 # Parse camera configuration from environment variable
@@ -134,6 +131,11 @@ UNIFI_PROTECT_TIME_LAPSE_FETCH_TOP_OF_THE_MINUTE = os.getenv(
     "UNIFI_PROTECT_TIME_LAPSE_FETCH_TOP_OF_THE_MINUTE", "True"
 ).lower() in ["true", "1", "t", "y", "yes"]
 
+# Optimization for multiple intervals - copy images between intervals when possible
+UNIFI_PROTECT_TIME_LAPSE_OPTIMIZE_INTERVAL_FETCHING = os.getenv(
+    "UNIFI_PROTECT_TIME_LAPSE_OPTIMIZE_INTERVAL_FETCHING", "True"
+).lower() in ["true", "1", "t", "y", "yes"]
+
 # =============================================================================
 # FETCH RETRY SETTINGS
 # =============================================================================
@@ -156,6 +158,17 @@ UNIFI_PROTECT_TIME_LAPSE_FETCH_RETRY_DELAY = int(
 UNIFI_PROTECT_TIME_LAPSE_LOGGING_LEVEL = os.getenv(
     "UNIFI_PROTECT_TIME_LAPSE_LOGGING_LEVEL", "INFO"
 ).upper()
+
+# Whether to log detailed summaries at INFO level
+UNIFI_PROTECT_TIME_LAPSE_HOURLY_SUMMARY_ENABLED = os.getenv(
+    "UNIFI_PROTECT_TIME_LAPSE_HOURLY_SUMMARY_ENABLED", "True"
+).lower() in ["true", "1", "t", "y", "yes"]
+
+# Interval between summary logs in seconds (default: 3600 = 1 hour)
+# Can be set to smaller values like 60 for more frequent summaries
+UNIFI_PROTECT_TIME_LAPSE_SUMMARY_INTERVAL_SECONDS = int(
+    os.getenv("UNIFI_PROTECT_TIME_LAPSE_SUMMARY_INTERVAL_SECONDS", "3600")
+)
 
 # =============================================================================
 # FFMPEG CONFIGURATIONS

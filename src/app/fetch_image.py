@@ -7,6 +7,8 @@ import logging
 import config
 import signal
 import time
+import shutil
+from collections import defaultdict
 
 
 # Configuring logging
@@ -25,6 +27,22 @@ class FetchImage:
         self.max_retries = config.UNIFI_PROTECT_TIME_LAPSE_FETCH_MAX_RETRIES
         self.retry_delay = config.UNIFI_PROTECT_TIME_LAPSE_FETCH_RETRY_DELAY
 
+        # Summary logging settings
+        self.hourly_summary_enabled = (
+            config.UNIFI_PROTECT_TIME_LAPSE_HOURLY_SUMMARY_ENABLED
+        )
+        self.summary_interval_seconds = (
+            config.UNIFI_PROTECT_TIME_LAPSE_SUMMARY_INTERVAL_SECONDS
+        )
+
+        # Optimize interval fetching
+        self.optimize_interval_fetching = (
+            config.UNIFI_PROTECT_TIME_LAPSE_OPTIMIZE_INTERVAL_FETCHING
+        )
+
+        # Dictionary to store the last captured image path for each camera
+        self.last_captured_images = {}
+
         # Log configuration summary
         logging.info(
             f"Configured intervals: {', '.join(str(interval) for interval in self.intervals)}"
@@ -37,6 +55,16 @@ class FetchImage:
             cameras = self.cameras_by_interval[interval]
             logging.info(
                 f"{interval}s interval: {len(cameras)} cameras: {', '.join(cameras)}"
+            )
+
+        if self.hourly_summary_enabled:
+            logging.info(
+                f"Summary logs enabled, interval: {self.summary_interval_seconds} seconds"
+            )
+
+        if self.optimize_interval_fetching:
+            logging.info(
+                "Interval optimization enabled: Images will be copied between intervals when possible"
             )
 
     async def create_directory_structure(self, camera_name, interval):
@@ -53,7 +81,7 @@ class FetchImage:
         )
         if not os.path.exists(path):
             os.makedirs(path)
-            logging.info(f"Created directory: {path}")
+            logging.debug(f"Created directory: {path}")
         return path
 
     async def fetch_camera_image(self, camera_name, image_path, interval):
@@ -66,7 +94,7 @@ class FetchImage:
             interval: Current interval in seconds
 
         Returns:
-            bool: True if successful, False otherwise
+            tuple: (bool, float, str) - Success status, fetch time in seconds, and path to the image file
         """
         # Get camera RTSPS URL
         rtsps_url = config.UNIFI_PROTECT_TIME_LAPSE_get_camera_rtsps_url(camera_name)
@@ -74,7 +102,35 @@ class FetchImage:
             logging.warning(
                 f"No stream configuration for camera: {camera_name}. Skipping."
             )
-            return False
+            return False, 0.0, None
+
+        # Check if we can copy from another interval instead of fetching
+        if self.optimize_interval_fetching and camera_name in self.last_captured_images:
+            last_image_info = self.last_captured_images[camera_name]
+            # Only reuse images captured within the last interval seconds
+            time_since_last_capture = time.time() - last_image_info["timestamp"]
+
+            # If the last capture was recent enough (within this interval) and was successful
+            if time_since_last_capture < interval and last_image_info["success"]:
+                source_path = last_image_info["path"]
+                if os.path.exists(source_path):
+                    new_timestamp = int(datetime.datetime.now().timestamp())
+                    new_filename = f"{camera_name}_{new_timestamp}.png"
+                    dest_path = os.path.join(image_path, new_filename)
+
+                    try:
+                        start_time = time.time()
+                        shutil.copy2(source_path, dest_path)
+                        copy_time = time.time() - start_time
+
+                        logging.debug(
+                            f"{interval}s: Copied image for {camera_name} in {copy_time:.2f}s "
+                            f"(reused from {last_image_info['interval']}s interval)"
+                        )
+                        return True, copy_time, dest_path
+                    except Exception as e:
+                        logging.error(f"Error copying image for {camera_name}: {e}")
+                        # Fall through to regular fetch
 
         fetch_start = time.time()
         timestamp = int(datetime.datetime.now().timestamp())
@@ -139,10 +195,19 @@ class FetchImage:
                         technique_name = (
                             config.UNIFI_PROTECT_TIME_LAPSE_CAPTURE_TECHNIQUE
                         )
-                        logging.info(
+                        logging.debug(
                             f"{interval}s: Captured image from {camera_name} in {fetch_time:.2f}s using {technique_name} technique"
                         )
-                        return True
+
+                        # Store this successful capture for potential reuse
+                        self.last_captured_images[camera_name] = {
+                            "path": filepath,
+                            "timestamp": time.time(),
+                            "success": True,
+                            "interval": interval,
+                        }
+
+                        return True, fetch_time, filepath
                     else:
                         if os.path.exists(filepath) and os.path.getsize(filepath) == 0:
                             logging.error(f"Empty image file created for {camera_name}")
@@ -175,8 +240,8 @@ class FetchImage:
                     )
 
             except asyncio.CancelledError:
-                logging.info(f"Fetch task for {camera_name} was cancelled.")
-                return False  # Exit the function cleanly
+                logging.warning(f"Fetch task for {camera_name} was cancelled.")
+                return False, 0.0, None  # Exit the function cleanly
             except Exception as e:
                 fetch_time = time.time() - fetch_start
                 logging.error(
@@ -189,16 +254,27 @@ class FetchImage:
                     await asyncio.sleep(self.retry_delay)
                 except asyncio.CancelledError:
                     # Handle cancellation during the sleep period
-                    logging.info(
+                    logging.warning(
                         f"Sleep interrupted for {camera_name} due to cancellation."
                     )
                     break  # Break the loop to stop further retries
 
-        return False
+        # Update the last captured image info to record failure
+        self.last_captured_images[camera_name] = {
+            "path": None,
+            "timestamp": time.time(),
+            "success": False,
+            "interval": interval,
+        }
+
+        return False, 0.0, None
 
     async def run(self):
-        # Create and start interval tasks individually - each will handle its own timing
-        for interval in self.intervals:
+        # Sort intervals in ascending order for optimization
+        sorted_intervals = sorted(self.intervals)
+
+        # Create and start interval tasks in order (smallest intervals first)
+        for interval in sorted_intervals:
             asyncio.create_task(self.handle_interval(interval))
 
     async def handle_interval(self, interval):
@@ -233,9 +309,22 @@ class FetchImage:
                 seconds=seconds_to_next, microseconds=-now.microsecond
             )
 
-        logging.info(
+        logging.debug(
             f"{interval}s: First fetch scheduled at {next_execution_time.strftime('%H:%M:%S')}"
         )
+
+        # For detailed camera statistics
+        last_summary_time = datetime.datetime.now()
+        camera_stats = {
+            camera: {
+                "success": 0,
+                "failure": 0,
+                "total_time": 0.0,
+                "fetches": 0,
+                "copied": 0,
+            }
+            for camera in cameras
+        }
 
         while True:
             now = datetime.datetime.now()
@@ -243,13 +332,13 @@ class FetchImage:
             # Check if it's time for the next fetch
             if now >= next_execution_time:
                 # Log the execution time
-                logging.info(
+                logging.debug(
                     f"{interval}s: Fetching {len(cameras)} cameras at {now.strftime('%H:%M:%S')}"
                 )
 
                 # Schedule next execution
                 next_execution_time += datetime.timedelta(seconds=interval)
-                logging.info(
+                logging.debug(
                     f"{interval}s: Next fetch at {next_execution_time.strftime('%H:%M:%S')}"
                 )
 
@@ -262,11 +351,118 @@ class FetchImage:
                     task = asyncio.create_task(
                         self.fetch_camera_image(camera_name, image_path, interval)
                     )
-                    tasks.append(task)
+                    tasks.append((camera_name, task))
 
                 if tasks:
-                    # Execute all camera fetches concurrently
-                    await asyncio.gather(*tasks, return_exceptions=True)
+                    # Execute all camera fetches concurrently and update statistics
+                    for camera_name, task in tasks:
+                        try:
+                            success, fetch_time, image_path = await task
+                            if success:
+                                camera_stats[camera_name]["success"] += 1
+                                camera_stats[camera_name]["total_time"] += fetch_time
+                                camera_stats[camera_name]["fetches"] += 1
+
+                                # Check if this was a copy operation
+                                if (
+                                    camera_name in self.last_captured_images
+                                    and self.last_captured_images[camera_name]["path"]
+                                    != image_path
+                                ):
+                                    camera_stats[camera_name]["copied"] += 1
+                            else:
+                                camera_stats[camera_name]["failure"] += 1
+                        except Exception as e:
+                            logging.error(
+                                f"Unexpected error processing {camera_name}: {e}"
+                            )
+                            camera_stats[camera_name]["failure"] += 1
+
+                # Check if it's time for summary and if summaries are enabled
+                if (
+                    self.hourly_summary_enabled
+                    and (now - last_summary_time).total_seconds()
+                    >= self.summary_interval_seconds
+                ):
+                    # Calculate overall statistics
+                    total_success = sum(
+                        stats["success"] for stats in camera_stats.values()
+                    )
+                    total_failure = sum(
+                        stats["failure"] for stats in camera_stats.values()
+                    )
+                    total_copied = sum(
+                        stats["copied"] for stats in camera_stats.values()
+                    )
+
+                    # Create detailed summary message
+                    summary_time_period = (
+                        f"{self.summary_interval_seconds // 60} minute"
+                        if self.summary_interval_seconds < 3600
+                        else f"{self.summary_interval_seconds // 3600} hour"
+                    )
+                    if summary_time_period.startswith("1 "):
+                        summary_time_period += ""
+                    else:
+                        summary_time_period += "s"
+
+                    summary_lines = [
+                        f"Summary for {interval}s interval (last {summary_time_period}):"
+                    ]
+                    if self.optimize_interval_fetching:
+                        summary_lines.append(
+                            f"- Overall: {total_success} successful, {total_failure} failed, {total_copied} copied from other intervals"
+                        )
+                    else:
+                        summary_lines.append(
+                            f"- Overall: {total_success} successful, {total_failure} failed"
+                        )
+
+                    # Add per-camera statistics
+                    for camera_name, stats in camera_stats.items():
+                        if stats["fetches"] > 0:
+                            avg_time = stats["total_time"] / stats["fetches"]
+                            success_rate = (
+                                (
+                                    stats["success"]
+                                    / (stats["success"] + stats["failure"])
+                                )
+                                * 100
+                                if (stats["success"] + stats["failure"]) > 0
+                                else 0
+                            )
+
+                            # Add copied info to the summary if optimization is enabled
+                            if self.optimize_interval_fetching and stats["copied"] > 0:
+                                summary_lines.append(
+                                    f"- {camera_name}: {stats['success']}/{stats['success'] + stats['failure']} successful "
+                                    f"({success_rate:.1f}%), {stats['copied']} copied, avg time: {avg_time:.2f}s"
+                                )
+                            else:
+                                summary_lines.append(
+                                    f"- {camera_name}: {stats['success']}/{stats['success'] + stats['failure']} successful "
+                                    f"({success_rate:.1f}%), avg time: {avg_time:.2f}s"
+                                )
+                        else:
+                            summary_lines.append(
+                                f"- {camera_name}: No successful fetches"
+                            )
+
+                    # Log the summary as a multi-line message
+                    logging.info("\n".join(summary_lines))
+
+                    # Reset statistics and update last summary time
+                    camera_stats = {
+                        camera: {
+                            "success": 0,
+                            "failure": 0,
+                            "total_time": 0.0,
+                            "fetches": 0,
+                            "copied": 0,
+                        }
+                        for camera in cameras
+                    }
+                    last_summary_time = now
 
             # Sleep until the next execution time
             sleep_time = (next_execution_time - datetime.datetime.now()).total_seconds()
