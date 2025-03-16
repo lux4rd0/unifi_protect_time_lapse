@@ -4,7 +4,7 @@ A Docker-based solution for creating time-lapse videos from Unifi Protect camera
 
 ## Overview
 
-Unifi Protect Time Lapse connects to your UniFi Protect system to capture snapshots from your cameras at configurable intervals. These snapshots are then automatically compiled into time-lapse videos daily, giving you a condensed view of what happened throughout the day.
+Unifi Protect Time Lapse connects to your UniFi Protect system to capture camera snapshots at configurable intervals. These snapshots are then automatically compiled into time-lapse videos daily, giving you a condensed view of what happened throughout the day.
 
 ### Features
 
@@ -27,7 +27,7 @@ Unifi Protect Time Lapse connects to your UniFi Protect system to capture snapsh
 1. Log in to your UniFi Protect system
 2. For each camera, go to its advanced settings page
 3. Enable RTSP streaming if not already enabled
-4. Note the RTSP URL which will be in the format: `rtsps://[ip-address]:7447/[stream-id]`
+4. Note the RTSP URL which will be in the format: `rtsps://[ip-address]:7441/[stream-id]?enableSrtp`
 5. The last part of the URL is your stream ID
 
 ### Deployment
