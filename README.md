@@ -1,5 +1,3 @@
-Here's the updated markdown documentation with information about Unifi Protect's "Enhanced" vs "Standard" encoding modes:
-
 # Unifi Protect Time Lapse
 
 A Docker-based solution for creating time-lapse videos from Unifi Protect cameras. This application fetches images from your Unifi Protect cameras at regular intervals and compiles them into high-quality time-lapse videos.
