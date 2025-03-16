@@ -32,7 +32,7 @@ Unifi Protect Time Lapse connects to your UniFi Protect system to capture camera
 
 ### Deployment
 
-1. Create a `docker-compose.yml` file:
+1. Create a `compose.yml` file:
 
 ```yaml
 services:
