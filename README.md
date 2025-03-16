@@ -35,8 +35,6 @@ Unifi Protect Time Lapse connects to your UniFi Protect system to capture camera
 1. Create a `docker-compose.yml` file:
 
 ```yaml
-version: '3'
-
 services:
   unifi_protect_time_lapse:
     container_name: unifi_protect_time_lapse
@@ -54,7 +52,7 @@ services:
 
 2. Replace `your-protect-host.example.com` with your Protect system's hostname
 3. Replace `YOUR_STREAM_ID1`, `YOUR_STREAM_ID2`, etc. with your actual camera stream IDs
-4. Run `docker-compose up -d`
+4. Run `docker compose up -d`
 
 ## Environmental Variables
 
@@ -99,8 +97,8 @@ Example:
 
 | Variable | Description | Default | Example |
 |----------|-------------|---------|---------|
-| `UNIFI_PROTECT_TIME_LAPSE_IMAGE_OUTPUT_PATH` | Directory for storing captured images | `output/images` | `/data/images` |
-| `UNIFI_PROTECT_TIME_LAPSE_VIDEO_OUTPUT_PATH` | Directory for storing generated videos | `output/videos` | `/data/video` |
+| `UNIFI_PROTECT_TIME_LAPSE_IMAGE_OUTPUT_PATH` | Directory for storing captured images | `output/images` | `output/images` |
+| `UNIFI_PROTECT_TIME_LAPSE_VIDEO_OUTPUT_PATH` | Directory for storing generated videos | `output/videos` | `output/videos` |
 
 ### Advanced Settings
 
