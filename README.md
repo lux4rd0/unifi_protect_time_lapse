@@ -63,9 +63,10 @@ services:
 | `UNIFI_PROTECT_TIME_LAPSE_PROTECT_HOST` | Hostname of your UniFi Protect system | - | `unifi.example.com` |
 | `UNIFI_PROTECT_TIME_LAPSE_PROTECT_PORT` | RTSPS port for your UniFi Protect system | `7441` | `7441` |
 | `UNIFI_PROTECT_TIME_LAPSE_CAMERAS_CONFIG` | JSON array of camera configurations | - | See below |
-| `UNIFI_PROTECT_TIME_LAPSE_FETCH_INTERVALS` | Comma-separated list of fetch intervals in seconds | `15,60` | `10,30,60` |
 | `UNIFI_PROTECT_TIME_LAPSE_DAYS_AGO` | Number of days ago to process for time-lapse creation | `1` | `0` |
 | `UNIFI_PROTECT_TIME_LAPSE_CREATION_TIME` | Time of day to create time-lapses (24-hour format) | `01:00` | `03:30` |
+
+**Note**: Fetch intervals are no longer configured using a separate environment variable. Instead, they are automatically derived from the `intervals` array specified for each camera in the `UNIFI_PROTECT_TIME_LAPSE_CAMERAS_CONFIG`.
 
 ### Camera Configuration JSON
 
