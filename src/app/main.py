@@ -6,6 +6,46 @@ from create_time_lapse import CreateTimeLapse
 from fetch_image import FetchImage
 import logging
 import config
+import platform
+import os
+
+
+# ASCII header for startup
+def print_header():
+    header = r"""
+    ██╗   ██╗███╗   ██╗██╗███████╗██╗    ██████╗ ██████╗  ██████╗ ████████╗███████╗ ██████╗████████╗
+    ██║   ██║████╗  ██║██║██╔════╝██║    ██╔══██╗██╔══██╗██╔═══██╗╚══██╔══╝██╔════╝██╔════╝╚══██╔══╝
+    ██║   ██║██╔██╗ ██║██║█████╗  ██║    ██████╔╝██████╔╝██║   ██║   ██║   █████╗  ██║        ██║   
+    ██║   ██║██║╚██╗██║██║██╔══╝  ██║    ██╔═══╝ ██╔══██╗██║   ██║   ██║   ██╔══╝  ██║        ██║   
+    ╚██████╔╝██║ ╚████║██║██║     ██║    ██║     ██║  ██║╚██████╔╝   ██║   ███████╗╚██████╗   ██║   
+     ╚═════╝ ╚═╝  ╚═══╝╚═╝╚═╝     ╚═╝    ╚═╝     ╚═╝  ╚═╝ ╚═════╝    ╚═╝   ╚══════╝ ╚═════╝   ╚═╝   
+                                                                                                      
+    ████████╗██╗███╗   ███╗███████╗    ██╗      █████╗ ██████╗ ███████╗███████╗                      
+    ╚══██╔══╝██║████╗ ████║██╔════╝    ██║     ██╔══██╗██╔══██╗██╔════╝██╔════╝                      
+       ██║   ██║██╔████╔██║█████╗      ██║     ███████║██████╔╝███████╗█████╗                        
+       ██║   ██║██║╚██╔╝██║██╔══╝      ██║     ██╔══██║██╔═══╝ ╚════██║██╔══╝                        
+       ██║   ██║██║ ╚═╝ ██║███████╗    ███████╗██║  ██║██║     ███████║███████╗                      
+       ╚═╝   ╚═╝╚═╝     ╚═╝╚══════╝    ╚══════╝╚═╝  ╚═╝╚═╝     ╚══════╝╚══════╝                      
+    """
+
+    # Get version from environment or use default
+    version = os.environ.get("UNIFI_PROTECT_TIME_LAPSE_VERSION", "dev")
+    build_date = os.environ.get("UNIFI_PROTECT_TIME_LAPSE_BUILD_DATE", "unknown")
+
+    # Project information
+    project_info = f"""
+    Version: {version} (Built: {build_date})
+    Created by: Dave Schmid (lux4rd0)
+    Repository: https://github.com/lux4rd0/unifi_protect_time_lapse
+    Documentation: https://labs.lux4rd0.com/applications/unifi-protect-time-lapse/
+    Environment: {platform.system()} {platform.release()} {platform.machine()}
+    Python: {platform.python_version()}
+    """
+
+    # Print header and project info
+    logging.info("\n" + header)
+    for line in project_info.strip().split("\n"):
+        logging.info(line.strip())
 
 
 async def run_timelapse_creation():
@@ -83,6 +123,46 @@ async def main():
     )
 
     logging.info("Starting Unifi Protect Time-lapse Service")
+
+    # Print ASCII header and project information
+    print_header()
+
+    # Print configuration summary
+    logging.info("==================== CONFIGURATION SUMMARY ====================")
+    logging.info(
+        f"Host: {config.UNIFI_PROTECT_TIME_LAPSE_PROTECT_HOST}:{config.UNIFI_PROTECT_TIME_LAPSE_PROTECT_PORT}"
+    )
+    logging.info(
+        f"Configured Cameras: {len(config.UNIFI_PROTECT_TIME_LAPSE_CAMERA_NAMES)}"
+    )
+    logging.info(
+        f"Intervals: {', '.join(str(i) for i in config.UNIFI_PROTECT_TIME_LAPSE_FETCH_INTERVALS)}"
+    )
+    logging.info(
+        f"Video Creation Time: {config.UNIFI_PROTECT_TIME_LAPSE_CREATION_TIME}"
+    )
+    logging.info(
+        f"Capture Technique: {config.UNIFI_PROTECT_TIME_LAPSE_CAPTURE_TECHNIQUE}"
+    )
+    logging.info(
+        f"Video Quality: {config.UNIFI_PROTECT_TIME_LAPSE_VIDEO_QUALITY_PRESET}"
+    )
+
+    if config.UNIFI_PROTECT_TIME_LAPSE_OPTIMIZE_INTERVAL_FETCHING:
+        logging.info(
+            "Interval Optimization: Enabled - will copy between intervals when possible"
+        )
+    else:
+        logging.info("Interval Optimization: Disabled")
+
+    if config.UNIFI_PROTECT_TIME_LAPSE_HOURLY_SUMMARY_ENABLED:
+        logging.info(
+            f"Summary Logs: Enabled ({config.UNIFI_PROTECT_TIME_LAPSE_SUMMARY_INTERVAL_SECONDS//60} minute intervals)"
+        )
+    else:
+        logging.info("Summary Logs: Disabled")
+
+    logging.info("===============================================================")
 
     tasks = []
 
