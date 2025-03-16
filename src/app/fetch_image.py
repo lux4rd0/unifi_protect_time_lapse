@@ -40,8 +40,16 @@ class FetchImage:
             config.UNIFI_PROTECT_TIME_LAPSE_OPTIMIZE_INTERVAL_FETCHING
         )
 
-        # Dictionary to store the last captured image path for each camera
-        self.last_captured_images = {}
+        # Registry settings
+        self.registry_window = config.UNIFI_PROTECT_TIME_LAPSE_REGISTRY_WINDOW
+        self.wait_timeout = config.UNIFI_PROTECT_TIME_LAPSE_WAIT_TIMEOUT
+
+        # Coordination system for interval captures
+        # Format: {timestamp: {camera_name: {interval: {"path": filepath, "ready": True/False}}}}
+        self.capture_registry = {}
+
+        # Use locks to protect the registry during concurrent access
+        self.registry_lock = asyncio.Lock()
 
         # Log configuration summary
         logging.info(
@@ -66,6 +74,9 @@ class FetchImage:
             logging.info(
                 "Interval optimization enabled: Images will be copied between intervals when possible"
             )
+            logging.info(
+                f"Registry window: {self.registry_window} seconds, wait timeout: {self.wait_timeout} seconds"
+            )
 
     async def create_directory_structure(self, camera_name, interval):
         """Create directory structure for storing images with given interval."""
@@ -84,58 +95,122 @@ class FetchImage:
             logging.debug(f"Created directory: {path}")
         return path
 
-    async def fetch_camera_image(self, camera_name, image_path, interval):
+    async def register_capture(
+        self, timestamp, camera_name, interval, filepath, ready=False
+    ):
         """
-        Fetch an image from a Unifi Protect camera using ffmpeg.
+        Register a pending or completed capture in the coordination system.
+
+        Args:
+            timestamp: Unix timestamp for the capture
+            camera_name: Name of the camera
+            interval: Interval in seconds
+            filepath: Path to the image file
+            ready: Whether the capture is ready (True) or pending (False)
+        """
+        async with self.registry_lock:
+            # Initialize the structure if needed
+            if timestamp not in self.capture_registry:
+                self.capture_registry[timestamp] = {}
+
+            if camera_name not in self.capture_registry[timestamp]:
+                self.capture_registry[timestamp][camera_name] = {}
+
+            # Register this capture
+            self.capture_registry[timestamp][camera_name][interval] = {
+                "path": filepath,
+                "ready": ready,
+            }
+
+            # Calculate registry window based on longest interval
+            max_interval = max(self.intervals)
+            window_seconds = max(self.registry_window, max_interval * 2)
+
+            # Clean up old entries (keep entries within window)
+            current_time = int(time.time())
+            old_timestamps = [
+                ts
+                for ts in self.capture_registry.keys()
+                if current_time - ts > window_seconds
+            ]
+
+            if old_timestamps:
+                for ts in old_timestamps:
+                    del self.capture_registry[ts]
+                logging.debug(
+                    f"Cleaned up {len(old_timestamps)} old registry entries older than {window_seconds} seconds"
+                )
+
+    async def wait_for_capture(self, timestamp, camera_name, source_interval):
+        """
+        Wait for a capture to be ready.
+
+        Args:
+            timestamp: Unix timestamp for the capture
+            camera_name: Name of the camera
+            source_interval: Source interval in seconds
+
+        Returns:
+            tuple: (bool, str) - Success status and path to the image file
+        """
+        wait_start = time.time()
+        logging.debug(
+            f"Waiting for {camera_name} capture at timestamp {timestamp} from {source_interval}s interval"
+        )
+
+        while (time.time() - wait_start) < self.wait_timeout:
+            async with self.registry_lock:
+                # Check if the capture is registered and ready
+                if (
+                    timestamp in self.capture_registry
+                    and camera_name in self.capture_registry[timestamp]
+                    and source_interval in self.capture_registry[timestamp][camera_name]
+                    and self.capture_registry[timestamp][camera_name][source_interval][
+                        "ready"
+                    ]
+                ):
+                    # Capture is ready
+                    filepath = self.capture_registry[timestamp][camera_name][
+                        source_interval
+                    ]["path"]
+                    return True, filepath
+
+            # Not ready yet, wait a bit
+            await asyncio.sleep(0.5)
+
+        # Timed out waiting
+        logging.error(
+            f"Timed out waiting for {camera_name} capture at timestamp {timestamp} from {source_interval}s interval"
+        )
+        return False, None
+
+    async def capture_fresh_image(self, camera_name, filepath, interval, timestamp):
+        """
+        Capture a fresh image from the camera.
 
         Args:
             camera_name: Name of the camera
-            image_path: Path to save the image
+            filepath: Full path to save the image
             interval: Current interval in seconds
+            timestamp: Unix timestamp for the capture
 
         Returns:
-            tuple: (bool, float, str) - Success status, fetch time in seconds, and path to the image file
+            bool: Success status
         """
+        # Register this pending capture
+        await self.register_capture(
+            timestamp, camera_name, interval, filepath, ready=False
+        )
+
         # Get camera RTSPS URL
         rtsps_url = config.UNIFI_PROTECT_TIME_LAPSE_get_camera_rtsps_url(camera_name)
         if not rtsps_url:
             logging.warning(
                 f"No stream configuration for camera: {camera_name}. Skipping."
             )
-            return False, 0.0, None
-
-        # Check if we can copy from another interval instead of fetching
-        if self.optimize_interval_fetching and camera_name in self.last_captured_images:
-            last_image_info = self.last_captured_images[camera_name]
-            # Only reuse images captured within the last interval seconds
-            time_since_last_capture = time.time() - last_image_info["timestamp"]
-
-            # If the last capture was recent enough (within this interval) and was successful
-            if time_since_last_capture < interval and last_image_info["success"]:
-                source_path = last_image_info["path"]
-                if os.path.exists(source_path):
-                    new_timestamp = int(datetime.datetime.now().timestamp())
-                    new_filename = f"{camera_name}_{new_timestamp}.png"
-                    dest_path = os.path.join(image_path, new_filename)
-
-                    try:
-                        start_time = time.time()
-                        shutil.copy2(source_path, dest_path)
-                        copy_time = time.time() - start_time
-
-                        logging.debug(
-                            f"{interval}s: Copied image for {camera_name} in {copy_time:.2f}s "
-                            f"(reused from {last_image_info['interval']}s interval)"
-                        )
-                        return True, copy_time, dest_path
-                    except Exception as e:
-                        logging.error(f"Error copying image for {camera_name}: {e}")
-                        # Fall through to regular fetch
+            return False, 0.0
 
         fetch_start = time.time()
-        timestamp = int(datetime.datetime.now().timestamp())
-        filename = f"{camera_name}_{timestamp}.png"
-        filepath = os.path.join(image_path, filename)
 
         # Get timeout for this interval
         timeout = self.interval_timeouts[interval]
@@ -199,15 +274,12 @@ class FetchImage:
                             f"{interval}s: Captured image from {camera_name} in {fetch_time:.2f}s using {technique_name} technique"
                         )
 
-                        # Store this successful capture for potential reuse
-                        self.last_captured_images[camera_name] = {
-                            "path": filepath,
-                            "timestamp": time.time(),
-                            "success": True,
-                            "interval": interval,
-                        }
+                        # Mark this capture as ready
+                        await self.register_capture(
+                            timestamp, camera_name, interval, filepath, ready=True
+                        )
 
-                        return True, fetch_time, filepath
+                        return True, fetch_time
                     else:
                         if os.path.exists(filepath) and os.path.getsize(filepath) == 0:
                             logging.error(f"Empty image file created for {camera_name}")
@@ -241,7 +313,7 @@ class FetchImage:
 
             except asyncio.CancelledError:
                 logging.warning(f"Fetch task for {camera_name} was cancelled.")
-                return False, 0.0, None  # Exit the function cleanly
+                return False, 0.0  # Exit the function cleanly
             except Exception as e:
                 fetch_time = time.time() - fetch_start
                 logging.error(
@@ -259,15 +331,56 @@ class FetchImage:
                     )
                     break  # Break the loop to stop further retries
 
-        # Update the last captured image info to record failure
-        self.last_captured_images[camera_name] = {
-            "path": None,
-            "timestamp": time.time(),
-            "success": False,
-            "interval": interval,
-        }
+        # If we get here, capture failed after all retries
+        return False, 0.0
 
-        return False, 0.0, None
+    async def copy_image(
+        self, source_file, dest_file, camera_name, interval, timestamp, source_interval
+    ):
+        """
+        Copy an image from source to destination.
+
+        Args:
+            source_file: Path to the source image
+            dest_file: Path to the destination image
+            camera_name: Name of the camera
+            interval: Current interval in seconds
+            timestamp: Unix timestamp for the capture
+            source_interval: Source interval in seconds
+
+        Returns:
+            tuple: (bool, float) - Success status and processing time
+        """
+        start_time = time.time()
+
+        try:
+            # Verify source file exists
+            if not os.path.exists(source_file):
+                logging.error(f"Source file not found for copying: {source_file}")
+                return False, 0.0
+
+            # Make sure destination directory exists
+            os.makedirs(os.path.dirname(dest_file), exist_ok=True)
+
+            # Perform the copy
+            shutil.copy2(source_file, dest_file)
+            copy_time = time.time() - start_time
+
+            # Register this copied capture as ready
+            await self.register_capture(
+                timestamp, camera_name, interval, dest_file, ready=True
+            )
+
+            logging.debug(
+                f"{interval}s: Copied image for {camera_name} in {copy_time:.2f}s "
+                f"(reused from {source_interval}s interval)"
+            )
+
+            return True, copy_time
+
+        except Exception as e:
+            logging.error(f"Error copying image for {camera_name}: {e}")
+            return False, 0.0
 
     async def run(self):
         # Sort intervals in ascending order for optimization
@@ -331,52 +444,149 @@ class FetchImage:
 
             # Check if it's time for the next fetch
             if now >= next_execution_time:
-                # Log the execution time
-                logging.debug(
-                    f"{interval}s: Fetching {len(cameras)} cameras at {now.strftime('%H:%M:%S')}"
-                )
+                # Store the current execution time
+                current_execution = next_execution_time
+                execution_timestamp = int(current_execution.timestamp())
 
                 # Schedule next execution
                 next_execution_time += datetime.timedelta(seconds=interval)
+
+                # Log the execution
                 logging.debug(
-                    f"{interval}s: Next fetch at {next_execution_time.strftime('%H:%M:%S')}"
+                    f"{interval}s: Fetching {len(cameras)} cameras at {current_execution.strftime('%H:%M:%S')}"
+                )
+                logging.debug(
+                    f"{interval}s: Next fetch scheduled for {next_execution_time.strftime('%H:%M:%S')}"
                 )
 
-                # Create all camera tasks at once for simultaneous execution
-                tasks = []
-                for camera_name in cameras:
+                # Determine if we should try to copy from smaller intervals
+                use_copy_strategy = False
+                source_interval = None
+
+                if self.optimize_interval_fetching and interval > min(self.intervals):
+                    # Find a suitable smaller interval to copy from
+                    for smaller_interval in sorted(self.intervals):
+                        # Skip if not smaller or doesn't divide evenly
+                        if (
+                            smaller_interval >= interval
+                            or interval % smaller_interval != 0
+                        ):
+                            continue
+
+                        # This is a candidate smaller interval
+                        # Check if the current execution time aligns with this smaller interval
+                        if execution_timestamp % smaller_interval == 0:
+                            # Alignment confirmed - use this smaller interval
+                            use_copy_strategy = True
+                            source_interval = smaller_interval
+                            logging.debug(
+                                f"{interval}s: Will use images from {smaller_interval}s interval for this execution"
+                            )
+                            break
+
+                # Process all cameras for this interval execution
+                async def process_camera(
+                    camera_name, use_copy=False, copy_from_interval=None
+                ):
+                    """Process a single camera for this interval execution"""
+                    # Create directory for this camera
                     image_path = await self.create_directory_structure(
                         camera_name, interval
                     )
-                    task = asyncio.create_task(
-                        self.fetch_camera_image(camera_name, image_path, interval)
-                    )
-                    tasks.append((camera_name, task))
 
-                if tasks:
-                    # Execute all camera fetches concurrently and update statistics
-                    for camera_name, task in tasks:
-                        try:
-                            success, fetch_time, image_path = await task
+                    # Create the filename with the execution timestamp
+                    filename = f"{camera_name}_{execution_timestamp}.png"
+                    filepath = os.path.join(image_path, filename)
+
+                    # Determine if we should copy for this specific camera
+                    camera_use_copy = use_copy
+
+                    # Skip copy if this camera isn't in the source interval
+                    if camera_use_copy and copy_from_interval:
+                        if camera_name not in self.cameras_by_interval.get(
+                            copy_from_interval, []
+                        ):
+                            camera_use_copy = False
+                            logging.debug(
+                                f"{interval}s: Camera {camera_name} not in {copy_from_interval}s interval, will capture fresh"
+                            )
+
+                    if camera_use_copy and copy_from_interval:
+                        # Wait for the source interval to capture this image first
+                        source_year = current_execution.strftime("%Y")
+                        source_month = current_execution.strftime("%m")
+                        source_day = current_execution.strftime("%d")
+
+                        source_path = os.path.join(
+                            self.image_output_path,
+                            camera_name,
+                            f"{copy_from_interval}s",
+                            source_year,
+                            source_month,
+                            source_day,
+                            f"{camera_name}_{execution_timestamp}.png",
+                        )
+
+                        # Wait for the source capture to be ready
+                        ready, source_file = await self.wait_for_capture(
+                            execution_timestamp, camera_name, copy_from_interval
+                        )
+
+                        if ready:
+                            # Source capture is ready, we can copy it
+                            success, processing_time = await self.copy_image(
+                                source_file,
+                                filepath,
+                                camera_name,
+                                interval,
+                                execution_timestamp,
+                                copy_from_interval,
+                            )
+
                             if success:
                                 camera_stats[camera_name]["success"] += 1
-                                camera_stats[camera_name]["total_time"] += fetch_time
+                                camera_stats[camera_name][
+                                    "total_time"
+                                ] += processing_time
                                 camera_stats[camera_name]["fetches"] += 1
-
-                                # Check if this was a copy operation
-                                if (
-                                    camera_name in self.last_captured_images
-                                    and self.last_captured_images[camera_name]["path"]
-                                    != image_path
-                                ):
-                                    camera_stats[camera_name]["copied"] += 1
+                                camera_stats[camera_name]["copied"] += 1
+                                return
                             else:
-                                camera_stats[camera_name]["failure"] += 1
-                        except Exception as e:
-                            logging.error(
-                                f"Unexpected error processing {camera_name}: {e}"
+                                # Copy failed, fall back to direct capture
+                                logging.warning(
+                                    f"{interval}s: Copy failed for {camera_name}, falling back to direct capture"
+                                )
+                        else:
+                            # Waiting for source timed out, fall back to direct capture
+                            logging.warning(
+                                f"{interval}s: Waiting for source timed out for {camera_name}, falling back to direct capture"
                             )
-                            camera_stats[camera_name]["failure"] += 1
+
+                    # Direct capture (either as primary strategy or fallback)
+                    success, processing_time = await self.capture_fresh_image(
+                        camera_name, filepath, interval, execution_timestamp
+                    )
+
+                    if success:
+                        camera_stats[camera_name]["success"] += 1
+                        camera_stats[camera_name]["total_time"] += processing_time
+                        camera_stats[camera_name]["fetches"] += 1
+                    else:
+                        camera_stats[camera_name]["failure"] += 1
+
+                # Process all cameras concurrently
+                tasks = []
+                for camera_name in cameras:
+                    task = asyncio.create_task(
+                        process_camera(camera_name, use_copy_strategy, source_interval)
+                    )
+                    tasks.append(task)
+
+                # Wait for all cameras to be processed
+                try:
+                    await asyncio.gather(*tasks)
+                except Exception as e:
+                    logging.error(f"Error during camera processing: {e}")
 
                 # Check if it's time for summary and if summaries are enabled
                 if (

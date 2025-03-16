@@ -136,6 +136,16 @@ UNIFI_PROTECT_TIME_LAPSE_OPTIMIZE_INTERVAL_FETCHING = os.getenv(
     "UNIFI_PROTECT_TIME_LAPSE_OPTIMIZE_INTERVAL_FETCHING", "True"
 ).lower() in ["true", "1", "t", "y", "yes"]
 
+# Registry cleanup window in seconds (default: 2 hours = 7200 seconds)
+UNIFI_PROTECT_TIME_LAPSE_REGISTRY_WINDOW = int(
+    os.getenv("UNIFI_PROTECT_TIME_LAPSE_REGISTRY_WINDOW", "7200")
+)
+
+# Maximum time to wait for source capture in seconds
+UNIFI_PROTECT_TIME_LAPSE_WAIT_TIMEOUT = int(
+    os.getenv("UNIFI_PROTECT_TIME_LAPSE_WAIT_TIMEOUT", "20")
+)
+
 # =============================================================================
 # FETCH RETRY SETTINGS
 # =============================================================================
