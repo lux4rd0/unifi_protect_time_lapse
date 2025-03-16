@@ -1,3 +1,5 @@
+Here's the updated markdown documentation with information about Unifi Protect's "Enhanced" vs "Standard" encoding modes:
+
 # Unifi Protect Time Lapse
 
 A Docker-based solution for creating time-lapse videos from Unifi Protect cameras. This application fetches images from your Unifi Protect cameras at regular intervals and compiles them into high-quality time-lapse videos.
@@ -48,6 +50,7 @@ services:
       UNIFI_PROTECT_TIME_LAPSE_PROTECT_PORT: '7441'
       UNIFI_PROTECT_TIME_LAPSE_CAMERAS_CONFIG: '[{"name":"cam-frontdoor","stream_id":"YOUR_STREAM_ID1","intervals":[15,60]},{"name":"cam-backyard","stream_id":"YOUR_STREAM_ID2","intervals":[60]}]'
       UNIFI_PROTECT_TIME_LAPSE_VIDEO_QUALITY_PRESET: 'high'
+      UNIFI_PROTECT_TIME_LAPSE_CAPTURE_TECHNIQUE: 'iframe'
 ```
 
 2. Replace `your-protect-host.example.com` with your Protect system's hostname
@@ -172,11 +175,13 @@ The application offers three techniques for capturing frames from RTSP streams:
 1. **standard** (default): Captures a single frame directly from the stream
    - Simple and fast
    - May show motion blur in high-movement scenarios
+   - Can produce corrupted or incomplete frames, especially with "Enhanced" encoding
 
 2. **iframe**: Only captures I-frames (keyframes) from the stream
    - Higher quality images with less compression artifacts
    - Reduces motion blur in windy conditions
    - May take slightly longer to capture as it waits for an I-frame
+   - Recommended for most Unifi Protect setups
 
 3. **blend**: Blends multiple consecutive frames together
    - Reduces motion blur by averaging movement
@@ -196,6 +201,24 @@ For very unstable cameras, the blend technique may work better:
 UNIFI_PROTECT_TIME_LAPSE_CAPTURE_TECHNIQUE: 'blend'
 UNIFI_PROTECT_TIME_LAPSE_BLEND_FRAMES: '2'
 ```
+
+### Unifi Protect Encoding Settings
+
+Unifi Protect offers two encoding modes that can affect image capture quality:
+
+1. **Enhanced**: Improves video quality while reducing storage size and optimizing streaming
+   - Uses more aggressive compression with fewer I-frames
+   - May cause issues with the `standard` capture technique
+   - Recommended to use with the `iframe` capture technique
+
+2. **Standard**: Improves playback compatibility for older devices
+   - Uses less aggressive compression with more frequent I-frames
+   - Works better with all capture techniques
+   - May use more storage space on your Unifi Protect system
+
+If you're experiencing blurry or corrupted images with the `standard` capture technique, consider either:
+- Switching your cameras to "Standard" encoding mode in Unifi Protect settings, or
+- Using the `iframe` capture technique in this application
 
 ### Multiple Site Deployment
 
@@ -231,9 +254,10 @@ services:
 - Check that your Protect system has RTSP enabled
 - Try increasing the timeout percentage
 
-### Motion Blur in Captured Images
+### Motion Blur or Corrupted Images
 
-- If cameras show motion blur (common in windy conditions), try using the `iframe` capture technique
-- For severe cases, the `blend` technique may provide better results
+- If using "Enhanced" encoding mode in Unifi Protect, switch to the `iframe` capture technique
+- For outdoor cameras subject to wind, use the `iframe` or `blend` techniques
+- Consider switching problem cameras to "Standard" encoding mode in Unifi Protect
+- For severe cases, increase the `UNIFI_PROTECT_TIME_LAPSE_IFRAME_TIMEOUT` to allow more time to find a good I-frame
 - Check the container logs to verify which technique is being used
-- Adjust timeouts as needed for your specific environment
