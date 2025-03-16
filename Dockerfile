@@ -1,44 +1,47 @@
-# Use an official Python runtime as a parent image with a specific Alpine version
-FROM python:3.13.2-alpine3.21 AS builder
+# Use official Alpine as base
+FROM alpine:3.21.3
 
-# Create a virtual environment for dependency isolation
-RUN python -m venv /venv
-ENV PATH="/venv/bin:$PATH"
+# Add build arguments for version and build time
+ARG VERSION="0.0.0"
+ARG BUILD_DATE="1970-01-01T00:00:00Z"
 
-# Install build dependencies for any potential compilations
-RUN apk add --no-cache --virtual .build-deps \
+# Set environment variables for version info
+ENV UNIFI_PROTECT_TIME_LAPSE_VERSION=$VERSION \
+    UNIFI_PROTECT_TIME_LAPSE_BUILD_DATE=$BUILD_DATE
+
+# Install Python and system dependencies
+RUN apk add --no-cache \
+    python3 \
+    python3-dev \
+    py3-pip \
+    py3-setuptools \
+    py3-wheel \
+    ffmpeg \
+    tzdata \
     gcc \
-    musl-dev \
-    python3-dev
+    musl-dev
 
-# Install Python dependencies into the virtual environment
+# Create a virtual environment
+RUN python3 -m venv /venv
+
+# Activate virtual environment and install dependencies
 COPY requirements.txt .
-RUN pip install --no-cache-dir --upgrade pip && \
-    pip install --no-cache-dir -r requirements.txt
+RUN /venv/bin/pip install --no-cache-dir -r requirements.txt
 
-# Start a clean image for the final build
-FROM python:3.13.2-alpine3.21
-
-# Install only runtime dependencies
-RUN apk add --no-cache ffmpeg tzdata
-
-# Copy the virtual environment from the builder stage
-COPY --from=builder /venv /venv
-ENV PATH="/venv/bin:$PATH"
-
-# Set the working directory
-WORKDIR /app/unifi_time_lapse
+# Set working directory
+WORKDIR /app/unifi_protect_time_lapse
 
 # Copy application code
 COPY src/app/ ./
 
-# Set non-root user for better security
-RUN adduser -D appuser
-USER appuser
+# Set environment variables
+ENV PYTHONUNBUFFERED=1 \
+    PYTHONPATH=/app/unifi_protect_time_lapse \
+    PATH="/venv/bin:$PATH"
 
-# Add healthcheck to monitor application health
+# Add healthcheck
 HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
     CMD ps aux | grep main.py | grep -v grep || exit 1
 
-# Run the main script when the container launches
+# Run the main script
 CMD ["python3", "./main.py"]
