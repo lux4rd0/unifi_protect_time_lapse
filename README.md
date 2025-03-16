@@ -38,18 +38,18 @@ Unifi Protect Time Lapse connects to your UniFi Protect system to capture camera
 version: '3'
 
 services:
-  unifi_time_lapse:
-    container_name: unifi_time_lapse
-    image: lux4rd0/unifi_time_lapse:latest
+  unifi_protect_time_lapse:
+    container_name: unifi_protect_time_lapse
+    image: lux4rd0/unifi_protect_time_lapse:latest
     restart: always
     volumes:
-      - ./output:/app/unifi_time_lapse/output:rw
+      - ./output:/app/unifi_protect_time_lapse/output:rw
     environment:
       TZ: America/Chicago
-      UNIFI_TIME_LAPSE_PROTECT_HOST: your-protect-host.example.com
-      UNIFI_TIME_LAPSE_PROTECT_PORT: '7441'
-      UNIFI_TIME_LAPSE_CAMERAS_CONFIG: '[{"name":"cam-frontdoor","stream_id":"YOUR_STREAM_ID1","intervals":[15,60]},{"name":"cam-backyard","stream_id":"YOUR_STREAM_ID2","intervals":[60]}]'
-      UNIFI_TIME_LAPSE_VIDEO_QUALITY_PRESET: 'high'
+      UNIFI_PROTECT_TIME_LAPSE_PROTECT_HOST: your-protect-host.example.com
+      UNIFI_PROTECT_TIME_LAPSE_PROTECT_PORT: '7441'
+      UNIFI_PROTECT_TIME_LAPSE_CAMERAS_CONFIG: '[{"name":"cam-frontdoor","stream_id":"YOUR_STREAM_ID1","intervals":[15,60]},{"name":"cam-backyard","stream_id":"YOUR_STREAM_ID2","intervals":[60]}]'
+      UNIFI_PROTECT_TIME_LAPSE_VIDEO_QUALITY_PRESET: 'high'
 ```
 
 2. Replace `your-protect-host.example.com` with your Protect system's hostname
@@ -62,16 +62,16 @@ services:
 
 | Variable | Description | Default | Example |
 |----------|-------------|---------|---------|
-| `UNIFI_TIME_LAPSE_PROTECT_HOST` | Hostname of your UniFi Protect system | - | `unifi.example.com` |
-| `UNIFI_TIME_LAPSE_PROTECT_PORT` | RTSPS port for your UniFi Protect system | `7441` | `7441` |
-| `UNIFI_TIME_LAPSE_CAMERAS_CONFIG` | JSON array of camera configurations | - | See below |
-| `UNIFI_TIME_LAPSE_FETCH_INTERVALS` | Comma-separated list of fetch intervals in seconds | `15,60` | `10,30,60` |
-| `UNIFI_TIME_LAPSE_DAYS_AGO` | Number of days ago to process for time-lapse creation | `1` | `0` |
-| `UNIFI_TIME_LAPSE_CREATION_TIME` | Time of day to create time-lapses (24-hour format) | `01:00` | `03:30` |
+| `UNIFI_PROTECT_TIME_LAPSE_PROTECT_HOST` | Hostname of your UniFi Protect system | - | `unifi.example.com` |
+| `UNIFI_PROTECT_TIME_LAPSE_PROTECT_PORT` | RTSPS port for your UniFi Protect system | `7441` | `7441` |
+| `UNIFI_PROTECT_TIME_LAPSE_CAMERAS_CONFIG` | JSON array of camera configurations | - | See below |
+| `UNIFI_PROTECT_TIME_LAPSE_FETCH_INTERVALS` | Comma-separated list of fetch intervals in seconds | `15,60` | `10,30,60` |
+| `UNIFI_PROTECT_TIME_LAPSE_DAYS_AGO` | Number of days ago to process for time-lapse creation | `1` | `0` |
+| `UNIFI_PROTECT_TIME_LAPSE_CREATION_TIME` | Time of day to create time-lapses (24-hour format) | `01:00` | `03:30` |
 
 ### Camera Configuration JSON
 
-The `UNIFI_TIME_LAPSE_CAMERAS_CONFIG` variable takes a JSON array of camera objects. Each camera object has the following properties:
+The `UNIFI_PROTECT_TIME_LAPSE_CAMERAS_CONFIG` variable takes a JSON array of camera objects. Each camera object has the following properties:
 
 - `name`: A unique identifier for the camera (used for file naming)
 - `stream_id`: The UniFi Protect stream ID for the camera
@@ -89,28 +89,28 @@ Example:
 
 | Variable | Description | Default | Example |
 |----------|-------------|---------|---------|
-| `UNIFI_TIME_LAPSE_VIDEO_QUALITY_PRESET` | Video quality preset (`medium`, `high`, or `custom`) | `medium` | `high` |
-| `UNIFI_TIME_LAPSE_CUSTOM_CRF` | Custom Constant Rate Factor (lower = higher quality, 0-51) | `23` | `18` |
-| `UNIFI_TIME_LAPSE_CUSTOM_PRESET` | Custom encoding preset (ultrafast to veryslow) | `medium` | `slow` |
-| `UNIFI_TIME_LAPSE_CUSTOM_PIX_FMT` | Custom pixel format | `yuv420p` | `yuv444p` |
-| `UNIFI_TIME_LAPSE_CUSTOM_COLOR_SETTINGS` | Use explicit color space settings | `false` | `true` |
+| `UNIFI_PROTECT_TIME_LAPSE_VIDEO_QUALITY_PRESET` | Video quality preset (`medium`, `high`, or `custom`) | `medium` | `high` |
+| `UNIFI_PROTECT_TIME_LAPSE_CUSTOM_CRF` | Custom Constant Rate Factor (lower = higher quality, 0-51) | `23` | `18` |
+| `UNIFI_PROTECT_TIME_LAPSE_CUSTOM_PRESET` | Custom encoding preset (ultrafast to veryslow) | `medium` | `slow` |
+| `UNIFI_PROTECT_TIME_LAPSE_CUSTOM_PIX_FMT` | Custom pixel format | `yuv420p` | `yuv444p` |
+| `UNIFI_PROTECT_TIME_LAPSE_CUSTOM_COLOR_SETTINGS` | Use explicit color space settings | `false` | `true` |
 
 ### Path Configuration
 
 | Variable | Description | Default | Example |
 |----------|-------------|---------|---------|
-| `UNIFI_TIME_LAPSE_IMAGE_OUTPUT_PATH` | Directory for storing captured images | `output/images` | `/data/images` |
-| `UNIFI_TIME_LAPSE_VIDEO_OUTPUT_PATH` | Directory for storing generated videos | `output/videos` | `/data/video` |
+| `UNIFI_PROTECT_TIME_LAPSE_IMAGE_OUTPUT_PATH` | Directory for storing captured images | `output/images` | `/data/images` |
+| `UNIFI_PROTECT_TIME_LAPSE_VIDEO_OUTPUT_PATH` | Directory for storing generated videos | `output/videos` | `/data/video` |
 
 ### Advanced Settings
 
 | Variable | Description | Default | Example |
 |----------|-------------|---------|---------|
-| `UNIFI_TIME_LAPSE_FETCH_TOP_OF_THE_MINUTE` | Align captures to the top of the minute | `true` | `false` |
-| `UNIFI_TIME_LAPSE_TIMEOUT_PERCENTAGE` | Percentage of interval to use as timeout | `0.8` | `0.9` |
-| `UNIFI_TIME_LAPSE_FFMPEG_FRAME_RATE` | Frame rate for generated videos | `30` | `24` |
-| `UNIFI_TIME_LAPSE_FFMPEG_DELETE_IMAGES_AFTER_SUCCESS` | Delete images after successful video creation | `false` | `true` |
-| `UNIFI_TIME_LAPSE_LOGGING_LEVEL` | Logging verbosity level | `INFO` | `DEBUG` |
+| `UNIFI_PROTECT_TIME_LAPSE_FETCH_TOP_OF_THE_MINUTE` | Align captures to the top of the minute | `true` | `false` |
+| `UNIFI_PROTECT_TIME_LAPSE_TIMEOUT_PERCENTAGE` | Percentage of interval to use as timeout | `0.8` | `0.9` |
+| `UNIFI_PROTECT_TIME_LAPSE_FFMPEG_FRAME_RATE` | Frame rate for generated videos | `30` | `24` |
+| `UNIFI_PROTECT_TIME_LAPSE_FFMPEG_DELETE_IMAGES_AFTER_SUCCESS` | Delete images after successful video creation | `false` | `true` |
+| `UNIFI_PROTECT_TIME_LAPSE_LOGGING_LEVEL` | Logging verbosity level | `INFO` | `DEBUG` |
 
 ## Docker Volume Structure
 
@@ -164,10 +164,10 @@ To monitor multiple Protect sites, create separate Docker Compose configurations
 
 ```yaml
 services:
-  unifi_time_lapse_site1:
+  unifi_protect_time_lapse_site1:
     # Site 1 configuration...
     
-  unifi_time_lapse_site2:
+  unifi_protect_time_lapse_site2:
     # Site 2 configuration...
 ```
 
@@ -178,7 +178,7 @@ services:
 - Verify your Protect host is accessible
 - Check that RTSP is enabled for your cameras
 - Verify the stream IDs are correct
-- Look at the container logs: `docker logs unifi_time_lapse`
+- Look at the container logs: `docker logs unifi_protect_time_lapse`
 
 ### Video Creation Fails
 
