@@ -9,6 +9,8 @@ Unifi Protect Time Lapse connects to your UniFi Protect system to capture camera
 ### Features
 
 - **Multiple Capture Intervals**: Configure different capture frequencies (e.g., every 15 seconds, every minute) for different cameras
+- **Interval Optimization**: Automatically copy images between intervals to reduce camera load and network traffic
+- **Detailed Status Summaries**: Get regular summaries showing success rates and performance for each camera
 - **High-Quality Image Capture**: Uses RTSPS streams and FFMPEG to capture high-quality PNG images
 - **Configurable Video Quality**: Choose between different video quality presets or create your own custom settings
 - **Flexible Scheduling**: Set when time-lapses are created
@@ -49,6 +51,11 @@ services:
       UNIFI_PROTECT_TIME_LAPSE_CAMERAS_CONFIG: '[{"name":"cam-frontdoor","stream_id":"YOUR_STREAM_ID1","intervals":[15,60]},{"name":"cam-backyard","stream_id":"YOUR_STREAM_ID2","intervals":[60]}]'
       UNIFI_PROTECT_TIME_LAPSE_VIDEO_QUALITY_PRESET: 'high'
       UNIFI_PROTECT_TIME_LAPSE_CAPTURE_TECHNIQUE: 'iframe'
+      
+      # Enable optimizations and summaries
+      UNIFI_PROTECT_TIME_LAPSE_OPTIMIZE_INTERVAL_FETCHING: 'true'
+      UNIFI_PROTECT_TIME_LAPSE_HOURLY_SUMMARY_ENABLED: 'true'
+      UNIFI_PROTECT_TIME_LAPSE_SUMMARY_INTERVAL_SECONDS: '3600'
 ```
 
 2. Replace `your-protect-host.example.com` with your Protect system's hostname
@@ -84,6 +91,14 @@ Example:
   {"name":"cam-backyard","stream_id":"xyz987654321abcdef","intervals":[60]}
 ]
 ```
+
+### Optimization and Summary Settings
+
+| Variable | Description | Default | Example |
+|----------|-------------|---------|---------|
+| `UNIFI_PROTECT_TIME_LAPSE_OPTIMIZE_INTERVAL_FETCHING` | Enable automatic copying between intervals | `true` | `false` |
+| `UNIFI_PROTECT_TIME_LAPSE_HOURLY_SUMMARY_ENABLED` | Enable periodic summary logs | `true` | `false` |
+| `UNIFI_PROTECT_TIME_LAPSE_SUMMARY_INTERVAL_SECONDS` | Seconds between summary logs | `3600` | `1800` |
 
 ### Video Quality Settings
 
@@ -148,6 +163,42 @@ output/
 ```
 
 ## Advanced Topics
+
+### Smart Interval Optimization
+
+When multiple intervals are configured for the same camera (e.g., 60s and 180s), the application can intelligently copy images between intervals instead of making redundant camera requests:
+
+- For example, with intervals of 60s and 180s:
+  - The 60s interval captures fresh images every minute
+  - The 180s interval will use copies from the 60s interval (specifically the 1st, 4th, 7th images) rather than making separate requests
+  
+This provides several benefits:
+- Reduces camera and network load
+- Improves reliability
+- Speeds up processing
+- Maintains proper timing across all intervals
+
+The summary logs will show how many images were freshly captured versus copied from other intervals.
+
+### Detailed Status Summaries
+
+The application can provide detailed summaries at configurable intervals (default: hourly) showing:
+
+- Overall success and failure rates
+- Per-camera performance statistics
+- Average fetch times for each camera
+- Number of copied vs. freshly captured images when optimization is enabled
+
+Example summary:
+```
+Summary for 60s interval (last 1 hour):
+- Overall: 295 successful, 5 failed, 120 copied from other intervals
+- cam-frontdoor: 60/60 successful (100.0%), 25 copied, avg time: 0.32s
+- cam-backyard: 58/60 successful (96.7%), 20 copied, avg time: 0.45s
+...
+```
+
+To adjust the frequency of summaries, change `UNIFI_PROTECT_TIME_LAPSE_SUMMARY_INTERVAL_SECONDS` (e.g., set to 1800 for 30-minute summaries).
 
 ### Quality Presets
 
@@ -259,3 +310,9 @@ services:
 - Consider switching problem cameras to "Standard" encoding mode in Unifi Protect
 - For severe cases, increase the `UNIFI_PROTECT_TIME_LAPSE_IFRAME_TIMEOUT` to allow more time to find a good I-frame
 - Check the container logs to verify which technique is being used
+
+### Interval Optimization Issues
+
+- If interval optimization is causing timing issues, verify that the intervals are proper multiples of each other
+- For complex interval patterns, you may need to disable optimization by setting `UNIFI_PROTECT_TIME_LAPSE_OPTIMIZE_INTERVAL_FETCHING` to `false`
+- Check the summary logs to see if images are being properly copied between intervals
