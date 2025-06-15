@@ -6,6 +6,8 @@ from datetime import datetime, timedelta
 from collections import defaultdict
 from typing import Dict, List, Optional, cast
 import time
+import shutil
+from pathlib import Path
 
 import config
 from camera_manager import CameraManager
@@ -25,8 +27,11 @@ class FetchService:
                 "total_captures": 0,
                 "successful_captures": 0,
                 "failed_captures": 0,
+                "reused_captures": 0,
                 "last_capture_time": None,
-                "camera_stats": defaultdict(lambda: {"success": 0, "failure": 0}),
+                "camera_stats": defaultdict(
+                    lambda: {"success": 0, "failure": 0, "reused": 0}
+                ),
             }
             for interval in config.FETCH_INTERVALS
         }
@@ -36,6 +41,16 @@ class FetchService:
         logging.info(
             f"Fetch service initialized with intervals: {config.FETCH_INTERVALS}"
         )
+
+        # Check for optimization opportunities
+        sorted_intervals = sorted(config.FETCH_INTERVALS)
+        for i, interval in enumerate(sorted_intervals):
+            smaller_intervals = [x for x in sorted_intervals[:i] if interval % x == 0]
+            if smaller_intervals:
+                source = max(smaller_intervals)
+                logging.info(
+                    f"Interval optimization: {interval}s will reuse images from {source}s when aligned"
+                )
 
     async def start(self):
         """Start the fetch service."""
@@ -53,8 +68,9 @@ class FetchService:
             # Discover cameras initially
             await self.camera_manager.get_cameras(force_refresh=True)
 
-            # Start interval tasks
-            for interval in config.FETCH_INTERVALS:
+            # Start interval tasks in order (smallest intervals first)
+            sorted_intervals = sorted(config.FETCH_INTERVALS)
+            for interval in sorted_intervals:
                 task = asyncio.create_task(self._run_interval(interval))
                 self.interval_tasks.append(task)
                 logging.info(f"Started {interval}s interval task")
@@ -101,69 +117,231 @@ class FetchService:
 
         # Calculate initial delay to align with interval
         now = datetime.now()
+        current_timestamp = int(now.timestamp())
 
-        if config.FETCH_TOP_OF_THE_MINUTE and interval >= 60 and interval % 60 == 0:
-            # Align to minute boundary for intervals that are multiples of 60
-            next_minute = now.replace(second=0, microsecond=0) + timedelta(minutes=1)
-            # Further align to the interval
-            minutes_since_hour = next_minute.minute
-            minutes_to_next_interval = interval // 60 - (
-                minutes_since_hour % (interval // 60)
-            )
-            if minutes_to_next_interval == interval // 60:
-                minutes_to_next_interval = 0
-            next_execution = next_minute + timedelta(minutes=minutes_to_next_interval)
+        # Find the next timestamp that aligns with this interval
+        remainder = current_timestamp % interval
+        if remainder == 0:
+            # We're already aligned, use current time
+            next_timestamp = current_timestamp
+            next_execution = now
         else:
-            # Align to interval boundary
-            seconds_since_minute = now.second + now.microsecond / 1000000
-            seconds_to_next = interval - (seconds_since_minute % interval)
-            next_execution = now + timedelta(seconds=seconds_to_next)
+            # Calculate next aligned timestamp
+            next_timestamp = current_timestamp + (interval - remainder)
+            next_execution = datetime.fromtimestamp(next_timestamp)
+
+        # For minute alignment preference on 60+ second intervals
+        if config.FETCH_TOP_OF_THE_MINUTE and interval >= 60:
+            # Ensure the timestamp also aligns with minute boundaries (ends in 0 seconds)
+            while next_timestamp % 60 != 0:
+                next_timestamp += interval
+                next_execution = datetime.fromtimestamp(next_timestamp)
+
+        # Verify final alignment
+        if next_timestamp % interval != 0:
+            logging.error(
+                f"{interval}s: Alignment calculation failed! Timestamp {next_timestamp} not divisible by {interval}"
+            )
+            return
 
         # Wait for first execution
         sleep_time = (next_execution - datetime.now()).total_seconds()
         if sleep_time > 0:
             logging.info(
-                f"{interval}s: First capture in {sleep_time:.1f}s at {next_execution.strftime('%H:%M:%S')}"
+                f"{interval}s: First capture in {sleep_time:.1f}s at {next_execution.strftime('%H:%M:%S')} (timestamp: {next_timestamp})"
             )
+            # Verify alignment will work for image reuse
+            smaller_intervals = [
+                i for i in config.FETCH_INTERVALS if i < interval and interval % i == 0
+            ]
+            if smaller_intervals:
+                source_interval = max(smaller_intervals)
+                if next_timestamp % source_interval == 0:
+                    logging.info(
+                        f"{interval}s: ✅ Will be able to reuse images from {source_interval}s interval"
+                    )
+                else:
+                    logging.warning(
+                        f"{interval}s: ⚠️  Will NOT align with {source_interval}s interval for image reuse"
+                    )
+
             await asyncio.sleep(sleep_time)
 
         while self.running:
             capture_time = datetime.now()
             timestamp = int(capture_time.timestamp())
 
+            # Verify we're still aligned (should always be true now)
+            if timestamp % interval != 0:
+                logging.warning(
+                    f"{interval}s: Timestamp {timestamp} not aligned with interval, skipping"
+                )
+                await asyncio.sleep(1)
+                continue
+
             try:
-                # Capture from all cameras
-                results = await self.camera_manager.capture_all_cameras(
-                    timestamp, interval
-                )
+                # Try to reuse images from smaller intervals first
+                reused_count = await self._try_reuse_images(interval, timestamp)
 
-                # Update statistics
-                self._update_stats(interval, results, capture_time)
+                if reused_count > 0:
+                    # We successfully reused images
+                    self._update_reuse_stats(interval, reused_count, capture_time)
+                    logging.info(
+                        f"{interval}s: Reused {reused_count} images from smaller intervals"
+                    )
+                else:
+                    # Need to capture fresh images
+                    logging.debug(f"{interval}s: No images reused, capturing fresh")
+                    results = await self.camera_manager.capture_all_cameras(
+                        timestamp, interval
+                    )
 
-                # Log interval summary
-                successful = sum(1 for success in results.values() if success)
-                total = len(results)
-                logging.debug(
-                    f"{interval}s: Captured {successful}/{total} at {capture_time.strftime('%H:%M:%S')}"
-                )
+                    # Update statistics
+                    self._update_stats(interval, results, capture_time)
+
+                    # Log interval summary
+                    successful = sum(1 for success in results.values() if success)
+                    total = len(results)
+                    logging.debug(
+                        f"{interval}s: Captured {successful}/{total} at {capture_time.strftime('%H:%M:%S')}"
+                    )
 
             except Exception as e:
                 logging.error(f"Error in {interval}s interval capture: {e}")
                 self.stats[interval]["failed_captures"] += 1
 
-            # Calculate next execution time
-            next_execution += timedelta(seconds=interval)
+            # Calculate next execution time (always maintain alignment)
+            next_timestamp = timestamp + interval
+            next_execution = datetime.fromtimestamp(next_timestamp)
 
             # Sleep until next execution
             sleep_time = (next_execution - datetime.now()).total_seconds()
             if sleep_time > 0:
                 await asyncio.sleep(sleep_time)
-            elif sleep_time < -interval:
-                # We're running way behind, reset to current time
+            elif sleep_time < -interval / 2:
+                # We're running significantly behind, log warning but continue
                 logging.warning(
-                    f"{interval}s interval is running {-sleep_time:.1f}s behind, resetting schedule"
+                    f"{interval}s interval is running {-sleep_time:.1f}s behind schedule"
                 )
-                next_execution = datetime.now() + timedelta(seconds=interval)
+                # Don't reset schedule - just continue with next aligned timestamp
+
+    async def _try_reuse_images(self, interval: int, timestamp: int) -> int:
+        """Try to reuse images from smaller intervals instead of capturing fresh."""
+
+        # Only try to reuse if this isn't the smallest interval
+        smaller_intervals = [
+            i for i in config.FETCH_INTERVALS if i < interval and interval % i == 0
+        ]
+        if not smaller_intervals:
+            logging.debug(f"{interval}s: No smaller intervals available for reuse")
+            return 0  # No smaller intervals to reuse from
+
+        # Find the best source interval (largest smaller interval that divides evenly)
+        source_interval = max(smaller_intervals)
+
+        # Check if the timestamp aligns with the source interval
+        if timestamp % source_interval != 0:
+            logging.debug(
+                f"{interval}s: Timestamp {timestamp} doesn't align with {source_interval}s interval (remainder: {timestamp % source_interval})"
+            )
+            return 0  # Timestamp doesn't align
+
+        # Also check if timestamp aligns with the current interval
+        if timestamp % interval != 0:
+            logging.debug(
+                f"{interval}s: Timestamp {timestamp} doesn't align with {interval}s interval (remainder: {timestamp % interval})"
+            )
+            return 0  # Current interval not aligned either
+
+        logging.info(
+            f"{interval}s: Attempting to reuse images from {source_interval}s interval at timestamp {timestamp}"
+        )
+
+        # Wait for source files to be written and flushed to disk (now configurable)
+        await asyncio.sleep(config.FETCH_IMAGE_REUSE_DELAY)
+
+        cameras = await self.camera_manager.get_cameras()
+        connected_cameras = [camera for camera in cameras if camera.is_connected]
+
+        reused_count = 0
+
+        for camera in connected_cameras:
+            # Build source and destination paths
+            date_obj = datetime.fromtimestamp(timestamp)
+            year = date_obj.strftime("%Y")
+            month = date_obj.strftime("%m")
+            day = date_obj.strftime("%d")
+
+            # Source path (from smaller interval)
+            source_dir = (
+                config.IMAGE_OUTPUT_PATH
+                / camera.safe_name
+                / f"{source_interval}s"
+                / year
+                / month
+                / day
+            )
+            source_file = source_dir / f"{camera.safe_name}_{timestamp}.jpg"
+
+            # Destination path (for current interval)
+            dest_dir = (
+                config.IMAGE_OUTPUT_PATH
+                / camera.safe_name
+                / f"{interval}s"
+                / year
+                / month
+                / day
+            )
+            dest_file = dest_dir / f"{camera.safe_name}_{timestamp}.jpg"
+
+            # Check if source file exists and destination doesn't
+            if source_file.exists() and not dest_file.exists():
+                try:
+                    # Create destination directory
+                    dest_dir.mkdir(parents=True, exist_ok=True)
+
+                    # Copy the file
+                    shutil.copy2(source_file, dest_file)
+                    reused_count += 1
+
+                    logging.debug(
+                        f"Reused {camera.safe_name} from {source_interval}s → {interval}s"
+                    )
+
+                except Exception as e:
+                    logging.error(f"Failed to copy image for {camera.safe_name}: {e}")
+            elif not source_file.exists():
+                logging.debug(
+                    f"Source file not found for {camera.safe_name}: {source_file}"
+                )
+                # Let's also check if the file was recently created
+                parent_dir = source_file.parent
+                if parent_dir.exists():
+                    recent_files = [
+                        f
+                        for f in parent_dir.glob(f"{camera.safe_name}_*.jpg")
+                        if abs(f.stat().st_mtime - timestamp) < 30
+                    ]
+                    if recent_files:
+                        logging.debug(
+                            f"Found {len(recent_files)} recent files for {camera.safe_name} but not exact timestamp"
+                        )
+            elif dest_file.exists():
+                logging.debug(
+                    f"Destination already exists for {camera.safe_name}: {dest_file}"
+                )
+                reused_count += 1  # Count as reused since we already have it
+
+        if reused_count > 0:
+            logging.info(
+                f"{interval}s: Successfully reused {reused_count} images from {source_interval}s interval"
+            )
+        else:
+            logging.warning(
+                f"{interval}s: Failed to reuse any images from {source_interval}s interval"
+            )
+
+        return reused_count
 
     async def _run_summary(self):
         """Run periodic summary logging."""
@@ -194,6 +372,18 @@ class FetchService:
                 interval_stats["failed_captures"] += 1
                 interval_stats["camera_stats"][camera_name]["failure"] += 1
 
+    def _update_reuse_stats(
+        self, interval: int, reused_count: int, capture_time: datetime
+    ):
+        """Update statistics when images are reused."""
+        interval_stats = self.stats[interval]
+
+        # Update overall stats
+        interval_stats["last_capture_time"] = capture_time
+        interval_stats["total_captures"] += reused_count
+        interval_stats["successful_captures"] += reused_count
+        interval_stats["reused_captures"] += reused_count
+
     def _log_summary(self):
         """Log periodic summary of statistics."""
         now = datetime.now()
@@ -217,10 +407,17 @@ class FetchService:
                 last_capture.strftime("%H:%M:%S") if last_capture else "Never"
             )
 
-            summary_lines.append(
-                f"  {interval}s: {stats['successful_captures']}/{stats['total_captures']} "
-                f"successful ({success_rate:.1f}%), last: {last_capture_str}"
-            )
+            # Include reuse information in summary
+            if stats["reused_captures"] > 0:
+                summary_lines.append(
+                    f"  {interval}s: {stats['successful_captures']}/{stats['total_captures']} "
+                    f"successful ({success_rate:.1f}%), {stats['reused_captures']} reused, last: {last_capture_str}"
+                )
+            else:
+                summary_lines.append(
+                    f"  {interval}s: {stats['successful_captures']}/{stats['total_captures']} "
+                    f"successful ({success_rate:.1f}%), last: {last_capture_str}"
+                )
 
             # Camera-specific stats
             for camera_name, camera_stats in stats["camera_stats"].items():
@@ -247,7 +444,10 @@ class FetchService:
                     "total_captures": 0,
                     "successful_captures": 0,
                     "failed_captures": 0,
-                    "camera_stats": defaultdict(lambda: {"success": 0, "failure": 0}),
+                    "reused_captures": 0,
+                    "camera_stats": defaultdict(
+                        lambda: {"success": 0, "failure": 0, "reused": 0}
+                    ),
                 }
             )
 

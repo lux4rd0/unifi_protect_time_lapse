@@ -113,6 +113,9 @@ FETCH_RETRY_DELAY = int(os.getenv("FETCH_RETRY_DELAY", "2"))
 # Concurrent fetch limit
 FETCH_CONCURRENT_LIMIT = int(os.getenv("FETCH_CONCURRENT_LIMIT", "5"))
 
+# Delay to wait for source images to be written before attempting reuse (in seconds)
+FETCH_IMAGE_REUSE_DELAY = float(os.getenv("FETCH_IMAGE_REUSE_DELAY", "5.0"))
+
 # =============================================================================
 # LOGGING CONFIGURATION
 # =============================================================================
@@ -221,6 +224,9 @@ def validate_config():
 
     if any(interval <= 0 for interval in FETCH_INTERVALS):
         errors.append("All FETCH_INTERVALS must be positive integers")
+
+    if FETCH_IMAGE_REUSE_DELAY < 0:
+        errors.append("FETCH_IMAGE_REUSE_DELAY must be a positive number")
 
     try:
         from datetime import datetime

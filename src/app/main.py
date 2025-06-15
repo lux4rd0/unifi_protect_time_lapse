@@ -38,15 +38,21 @@ def print_banner():
        ██║   ██║██║╚██╔╝██║██╔══╝      ██║     ██╔══██║██╔═══╝ ╚════██║██╔══╝                        
        ██║   ██║██║ ╚═╝ ██║███████╗    ███████╗██║  ██║██║     ███████║███████╗                      
        ╚═╝   ╚═╝╚═╝     ╚═╝╚══════╝    ╚══════╝╚═╝  ╚═╝╚═╝     ╚══════╝╚══════╝                      
-
-    Version: 2.0.0 (API-based) | Created by: Dave Schmid (lux4rd0)
-    Repository: https://github.com/lux4rd0/unifi_protect_time_lapse
     """
+
+    # Get version info from environment variables set during Docker build
+    version = os.environ.get("UNIFI_PROTECT_TIME_LAPSE_VERSION", "dev")
+    build_date = os.environ.get("UNIFI_PROTECT_TIME_LAPSE_BUILD_DATE", "unknown")
 
     # Use logging instead of print
     for line in banner.split("\n"):
         if line.strip():  # Only log non-empty lines
             logging.info(line)
+
+    # Version and build information
+    logging.info(f"Version: {version} | Build Date: {build_date}")
+    logging.info("Created by: Dave Schmid (lux4rd0)")
+    logging.info("Repository: https://github.com/lux4rd0/unifi_protect_time_lapse")
 
     # System information
     logging.info(
@@ -91,6 +97,7 @@ def print_configuration():
     logging.info(f"Top of Minute Alignment: {config.FETCH_TOP_OF_THE_MINUTE}")
     logging.info(f"Max Concurrent Fetches: {config.FETCH_CONCURRENT_LIMIT}")
     logging.info(f"Max Retries: {config.FETCH_MAX_RETRIES}")
+    logging.info(f"Image Reuse Delay: {config.FETCH_IMAGE_REUSE_DELAY}s")
 
     # Time-lapse settings
     logging.info(f"Time-lapse Creation Enabled: {config.TIMELAPSE_CREATION_ENABLED}")
