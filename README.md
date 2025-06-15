@@ -1,18 +1,29 @@
-# Unifi Protect Time Lapse
+# UniFi Protect Time-lapse (API-based)
 
-A Docker-based solution for creating time-lapse videos from Unifi Protect cameras. This application fetches images from your Unifi Protect cameras at regular intervals and compiles them into high-quality time-lapse videos.
+A modern, API-based solution for creating time-lapse videos from UniFi Protect cameras. This application uses the UniFi Protect REST API to capture camera snapshots at configurable intervals and compiles them into high-quality time-lapse videos.
 
 ## Overview
 
-Unifi Protect Time Lapse connects to your UniFi Protect system to capture camera snapshots at configurable intervals. These snapshots are then automatically compiled into time-lapse videos daily, giving you a condensed view of what happened throughout the day.
+UniFi Protect Time-lapse connects to your UniFi Protect system via its REST API to capture camera snapshots at configurable intervals. These snapshots are then automatically compiled into time-lapse videos daily, giving you a condensed view of what happened throughout the day.
+
+### Key Improvements in This Version
+
+- **API-based**: Uses UniFi Protect's REST API instead of RTSP streams for much better reliability
+- **Simplified Configuration**: No more complex stream IDs - just use camera names
+- **Automatic Camera Discovery**: Discovers all cameras automatically from your UniFi Protect system
+- **Smart Quality Detection**: Automatically detects which cameras support high-quality snapshots
+- **Better Error Handling**: Comprehensive retry logic and graceful handling of disconnected cameras
+- **Flexible Camera Selection**: Whitelist, blacklist, or capture all cameras
+- **Modern Architecture**: Built with async/await for high performance
 
 ### Features
 
-- **Multiple Capture Intervals**: Configure different capture frequencies (e.g., every 15 seconds, every minute) for different cameras
-- **Interval Optimization**: Automatically copy images between intervals to reduce camera load and network traffic
+- **Multiple Capture Intervals**: Configure different capture frequencies (e.g., every 60 seconds, every 3 minutes)
+- **Automatic Camera Discovery**: No need for manual stream ID configuration
+- **Smart Quality Selection**: Uses high-quality snapshots when cameras support it
 - **Detailed Status Summaries**: Get regular summaries showing success rates and performance for each camera
-- **High-Quality Image Capture**: Uses RTSPS streams and FFMPEG to capture high-quality PNG images
-- **Configurable Video Quality**: Choose between different video quality presets or create your own custom settings
+- **Configurable Video Quality**: Choose between different video quality presets or create custom settings
+- **Flexible Camera Selection**: Choose which cameras to include via whitelist, blacklist, or capture all
 - **Flexible Scheduling**: Set when time-lapses are created
 - **Docker-Based**: Easy deployment using Docker
 
@@ -21,22 +32,24 @@ Unifi Protect Time Lapse connects to your UniFi Protect system to capture camera
 ### Prerequisites
 
 - Docker and Docker Compose
-- UniFi Protect system with accessible RTSP streams
-- Stream IDs for your cameras (instructions below)
+- UniFi Protect system with API access
+- API key from your UniFi Protect system
 
-### Finding Your Camera Stream IDs
+### Getting Your API Key
 
-1. Log in to your UniFi Protect system
-2. For each camera, go to its advanced settings page
-3. Enable RTSP streaming if not already enabled
-4. Note the RTSP URL which will be in the format: `rtsps://[ip-address]:7441/[stream-id]?enableSrtp`
-5. The last part of the URL is your stream ID
+1. Log in to your UniFi Protect web interface
+2. Go to **Control Plane** → **Integrations** → **Your API Keys**
+3. Click **Generate API Key**
+4. Give it a descriptive name (e.g., "Time-lapse Service")
+5. Copy the generated API key - you'll need this for configuration
 
 ### Deployment
 
-1. Create a `compose.yml` file:
+1. Create a `docker-compose.yml` file:
 
 ```yaml
+name: unifi_protect_time_lapse
+
 services:
   unifi_protect_time_lapse:
     container_name: unifi_protect_time_lapse
@@ -46,96 +59,166 @@ services:
       - ./output:/app/unifi_protect_time_lapse/output:rw
     environment:
       TZ: America/Chicago
-      UNIFI_PROTECT_TIME_LAPSE_PROTECT_HOST: your-protect-host.example.com
-      UNIFI_PROTECT_TIME_LAPSE_PROTECT_PORT: '7441'
-      UNIFI_PROTECT_TIME_LAPSE_CAMERAS_CONFIG: '[{"name":"cam-frontdoor","stream_id":"YOUR_STREAM_ID1","intervals":[15,60]},{"name":"cam-backyard","stream_id":"YOUR_STREAM_ID2","intervals":[60]}]'
-      UNIFI_PROTECT_TIME_LAPSE_VIDEO_QUALITY_PRESET: 'high'
-      UNIFI_PROTECT_TIME_LAPSE_CAPTURE_TECHNIQUE: 'iframe'
+
+      # =============================================================================
+      # UNIFI PROTECT API SETTINGS
+      # =============================================================================
+      UNIFI_PROTECT_API_KEY: "your_api_key_here"  # 🔑 REQUIRED: Get from Control Plane → Integrations → Your API Keys
+      UNIFI_PROTECT_BASE_URL: "https://your-protect-host/proxy/protect/integration/v1"
+      UNIFI_PROTECT_VERIFY_SSL: "false"
+      UNIFI_PROTECT_REQUEST_TIMEOUT: "30"
+      CAMERA_REFRESH_INTERVAL: "300"  # Check for reconnected cameras every 5 minutes
+      SNAPSHOT_HIGH_QUALITY: "true"   # Request high resolution snapshots when supported
+
+      # =============================================================================
+      # CAMERA CONFIGURATION
+      # =============================================================================
+      CAMERA_SELECTION_MODE: "all"  # Options: "all", "whitelist", "blacklist"
+      # CAMERA_WHITELIST: '["Front Door Cam", "Garage Cam", "Backyard Cam"]'
+      # CAMERA_BLACKLIST: '["Private Camera"]'
       
-      # Enable optimizations and summaries
-      UNIFI_PROTECT_TIME_LAPSE_OPTIMIZE_INTERVAL_FETCHING: 'true'
-      UNIFI_PROTECT_TIME_LAPSE_HOURLY_SUMMARY_ENABLED: 'true'
-      UNIFI_PROTECT_TIME_LAPSE_SUMMARY_INTERVAL_SECONDS: '3600'
+      # Fetch intervals in seconds
+      FETCH_INTERVALS: '[60, 180]'
+
+      # =============================================================================
+      # TIME-LAPSE SETTINGS
+      # =============================================================================
+      TIMELAPSE_CREATION_ENABLED: "true"
+      TIMELAPSE_CREATION_TIME: "01:00"  # Time to create videos (HH:MM format)
+      TIMELAPSE_DAYS_AGO: "1"           # Number of days ago to process
+
+      # =============================================================================
+      # VIDEO QUALITY SETTINGS
+      # =============================================================================
+      FFMPEG_FRAME_RATE: "30"
+      FFMPEG_CRF: "23"                    # Video quality (lower = higher quality)
+      FFMPEG_PRESET: "medium"             # Encoding speed preset
+      FFMPEG_PIXEL_FORMAT: "yuv420p"     # Pixel format
+      FFMPEG_OVERWRITE_FILE: "false"
+      FFMPEG_DELETE_IMAGES_AFTER_SUCCESS: "false"
+      FFMPEG_CONCURRENT_CREATION: "2"
+
+      # =============================================================================
+      # LOGGING
+      # =============================================================================
+      LOGGING_LEVEL: "INFO"
+      SUMMARY_ENABLED: "true"
+      SUMMARY_INTERVAL_SECONDS: "3600"   # Summary every hour
 ```
 
-2. Replace `your-protect-host.example.com` with your Protect system's hostname
-3. Replace `YOUR_STREAM_ID1`, `YOUR_STREAM_ID2`, etc. with your actual camera stream IDs
+2. Replace `your_api_key_here` with your actual API key
+3. Replace `your-protect-host` with your UniFi Protect hostname/IP
 4. Run `docker compose up -d`
 
 ## Environmental Variables
 
-### Core Configuration
+### Core API Configuration
 
 | Variable | Description | Default | Example |
 |----------|-------------|---------|---------|
-| `UNIFI_PROTECT_TIME_LAPSE_PROTECT_HOST` | Hostname of your UniFi Protect system | - | `unifi.example.com` |
-| `UNIFI_PROTECT_TIME_LAPSE_PROTECT_PORT` | RTSPS port for your UniFi Protect system | `7441` | `7441` |
-| `UNIFI_PROTECT_TIME_LAPSE_CAMERAS_CONFIG` | JSON array of camera configurations | - | See below |
-| `UNIFI_PROTECT_TIME_LAPSE_DAYS_AGO` | Number of days ago to process for time-lapse creation | `1` | `0` |
-| `UNIFI_PROTECT_TIME_LAPSE_CREATION_TIME` | Time of day to create time-lapses (24-hour format) | `01:00` | `03:30` |
-| `UNIFI_PROTECT_TIME_LAPSE_MAX_SLEEP_INTERVAL` | Maximum seconds between time-lapse status log messages | `3600` | `300` |
+| `UNIFI_PROTECT_API_KEY` | **Required**: API key from UniFi Protect | - | `0hOcBk-nofd7...` |
+| `UNIFI_PROTECT_BASE_URL` | **Required**: Base URL to UniFi Protect API | - | `https://unifi.local/proxy/protect/integration/v1` |
+| `UNIFI_PROTECT_VERIFY_SSL` | Whether to verify SSL certificates | `false` | `true` |
+| `UNIFI_PROTECT_REQUEST_TIMEOUT` | Request timeout in seconds | `30` | `60` |
+| `CAMERA_REFRESH_INTERVAL` | How often to check for new/reconnected cameras (seconds) | `300` | `60` |
+| `SNAPSHOT_HIGH_QUALITY` | Request high resolution snapshots when supported | `true` | `false` |
 
-
-**Note**: Fetch intervals are no longer configured using a separate environment variable. Instead, they are automatically derived from the `intervals` array specified for each camera in the `UNIFI_PROTECT_TIME_LAPSE_CAMERAS_CONFIG`.
-
-### Camera Configuration JSON
-
-The `UNIFI_PROTECT_TIME_LAPSE_CAMERAS_CONFIG` variable takes a JSON array of camera objects. Each camera object has the following properties:
-
-- `name`: A unique identifier for the camera (used for file naming)
-- `stream_id`: The UniFi Protect stream ID for the camera
-- `intervals`: An array of intervals (in seconds) to capture images for this camera
-
-Example:
-```json
-[
-  {"name":"cam-frontdoor","stream_id":"abcdefghijk123456","intervals":[15,60]},
-  {"name":"cam-backyard","stream_id":"xyz987654321abcdef","intervals":[60]}
-]
-```
-
-### Optimization and Summary Settings
+### Camera Configuration
 
 | Variable | Description | Default | Example |
 |----------|-------------|---------|---------|
-| `UNIFI_PROTECT_TIME_LAPSE_OPTIMIZE_INTERVAL_FETCHING` | Enable automatic copying between intervals | `true` | `false` |
-| `UNIFI_PROTECT_TIME_LAPSE_HOURLY_SUMMARY_ENABLED` | Enable periodic summary logs | `true` | `false` |
-| `UNIFI_PROTECT_TIME_LAPSE_SUMMARY_INTERVAL_SECONDS` | Seconds between summary logs | `3600` | `1800` |
+| `CAMERA_SELECTION_MODE` | Camera selection method | `all` | `whitelist`, `blacklist` |
+| `CAMERA_WHITELIST` | JSON array of camera names to include (whitelist mode) | `[]` | `'["Front Door", "Garage"]'` |
+| `CAMERA_BLACKLIST` | JSON array of camera names to exclude (blacklist mode) | `[]` | `'["Private Cam"]'` |
+| `FETCH_INTERVALS` | JSON array of capture intervals in seconds | `[10, 60]` | `[30, 300, 900]` |
+
+### Fetch Settings
+
+| Variable | Description | Default | Example |
+|----------|-------------|---------|---------|
+| `FETCH_ENABLED` | Enable/disable image fetching | `true` | `false` |
+| `FETCH_TOP_OF_THE_MINUTE` | Align captures to minute boundaries | `true` | `false` |
+| `FETCH_MAX_RETRIES` | Maximum retry attempts for failed captures | `3` | `5` |
+| `FETCH_RETRY_DELAY` | Delay between retries in seconds | `2` | `5` |
+| `FETCH_CONCURRENT_LIMIT` | Maximum concurrent API requests | `5` | `10` |
+
+### Time-lapse Settings
+
+| Variable | Description | Default | Example |
+|----------|-------------|---------|---------|
+| `TIMELAPSE_CREATION_ENABLED` | Enable/disable video creation | `true` | `false` |
+| `TIMELAPSE_CREATION_TIME` | Daily time to create videos (HH:MM) | `01:00` | `03:30` |
+| `TIMELAPSE_DAYS_AGO` | Number of days ago to process | `1` | `0` |
 
 ### Video Quality Settings
 
 | Variable | Description | Default | Example |
 |----------|-------------|---------|---------|
-| `UNIFI_PROTECT_TIME_LAPSE_VIDEO_QUALITY_PRESET` | Video quality preset (`medium`, `high`, or `custom`) | `medium` | `high` |
-| `UNIFI_PROTECT_TIME_LAPSE_CUSTOM_CRF` | Custom Constant Rate Factor (lower = higher quality, 0-51) | `23` | `18` |
-| `UNIFI_PROTECT_TIME_LAPSE_CUSTOM_PRESET` | Custom encoding preset (ultrafast to veryslow) | `medium` | `slow` |
-| `UNIFI_PROTECT_TIME_LAPSE_CUSTOM_PIX_FMT` | Custom pixel format | `yuv420p` | `yuv444p` |
-| `UNIFI_PROTECT_TIME_LAPSE_CUSTOM_COLOR_SETTINGS` | Use explicit color space settings | `false` | `true` |
-
-### Capture Technique Settings
-
-| Variable | Description | Default | Example |
-|----------|-------------|---------|---------|
-| `UNIFI_PROTECT_TIME_LAPSE_CAPTURE_TECHNIQUE` | Frame capture technique (`standard`, `iframe`, or `blend`) | `standard` | `iframe` |
-| `UNIFI_PROTECT_TIME_LAPSE_IFRAME_TIMEOUT` | Maximum time to wait for an I-frame in seconds (only used with `iframe` technique) | `2.0` | `3.0` |
-| `UNIFI_PROTECT_TIME_LAPSE_BLEND_FRAMES` | Number of frames to blend together (only used with `blend` technique) | `2` | `3` |
+| `FFMPEG_FRAME_RATE` | Output video frame rate | `30` | `24` |
+| `FFMPEG_CRF` | Video quality (lower = higher quality, 0-51) | `23` | `18` |
+| `FFMPEG_PRESET` | Encoding speed preset | `medium` | `slow`, `fast` |
+| `FFMPEG_PIXEL_FORMAT` | Pixel format | `yuv420p` | `yuv444p` |
+| `FFMPEG_OVERWRITE_FILE` | Overwrite existing videos | `false` | `true` |
+| `FFMPEG_DELETE_IMAGES_AFTER_SUCCESS` | Delete images after video creation | `false` | `true` |
+| `FFMPEG_CONCURRENT_CREATION` | Concurrent video creation jobs | `2` | `4` |
 
 ### Path Configuration
 
 | Variable | Description | Default | Example |
 |----------|-------------|---------|---------|
-| `UNIFI_PROTECT_TIME_LAPSE_IMAGE_OUTPUT_PATH` | Directory for storing captured images | `output/images` | `output/images` |
-| `UNIFI_PROTECT_TIME_LAPSE_VIDEO_OUTPUT_PATH` | Directory for storing generated videos | `output/videos` | `output/videos` |
+| `IMAGE_OUTPUT_PATH` | Directory for storing captured images | `output/images` | `storage/photos` |
+| `VIDEO_OUTPUT_PATH` | Directory for storing generated videos | `output/videos` | `storage/videos` |
 
-### Advanced Settings
+### Logging Configuration
 
 | Variable | Description | Default | Example |
 |----------|-------------|---------|---------|
-| `UNIFI_PROTECT_TIME_LAPSE_FETCH_TOP_OF_THE_MINUTE` | Align captures to the top of the minute | `true` | `false` |
-| `UNIFI_PROTECT_TIME_LAPSE_TIMEOUT_PERCENTAGE` | Percentage of interval to use as timeout | `0.8` | `0.9` |
-| `UNIFI_PROTECT_TIME_LAPSE_FFMPEG_FRAME_RATE` | Frame rate for generated videos | `30` | `24` |
-| `UNIFI_PROTECT_TIME_LAPSE_FFMPEG_DELETE_IMAGES_AFTER_SUCCESS` | Delete images after successful video creation | `false` | `true` |
-| `UNIFI_PROTECT_TIME_LAPSE_LOGGING_LEVEL` | Logging verbosity level | `INFO` | `DEBUG` |
+| `LOGGING_LEVEL` | Logging verbosity level | `INFO` | `DEBUG`, `WARNING` |
+| `SUMMARY_ENABLED` | Enable periodic summary logs | `true` | `false` |
+| `SUMMARY_INTERVAL_SECONDS` | Seconds between summary logs | `3600` | `1800` |
+
+## Camera Selection Examples
+
+### Capture All Cameras
+```yaml
+CAMERA_SELECTION_MODE: "all"
+```
+
+### Whitelist Specific Cameras
+```yaml
+CAMERA_SELECTION_MODE: "whitelist"
+CAMERA_WHITELIST: '["Front Door Cam", "Garage Cam", "Backyard Cam"]'
+```
+
+### Blacklist Specific Cameras
+```yaml
+CAMERA_SELECTION_MODE: "blacklist"
+CAMERA_BLACKLIST: '["Private Bedroom Cam", "Office Camera"]'
+```
+
+## Usage Commands
+
+The application supports several command-line modes for testing and manual operation:
+
+### Test Camera Connectivity
+```bash
+docker exec your_container python3 main.py test
+```
+
+### Create Time-lapse Videos Now
+```bash
+docker exec your_container python3 main.py create
+```
+
+### Run Only Image Capture
+```bash
+docker exec your_container python3 main.py fetch
+```
+
+### Run Only Video Creation
+```bash
+docker exec your_container python3 main.py timelapse
+```
 
 ## Docker Volume Structure
 
@@ -144,177 +227,249 @@ Images and videos are stored in the following structure:
 ```
 output/
 ├── images/
-│   ├── cam-frontdoor/
-│   │   ├── 15s/
-│   │   │   └── YYYY/MM/DD/
-│   │   │       └── cam-frontdoor_1234567890.png
-│   │   └── 60s/
-│   │       └── YYYY/MM/DD/
-│   └── cam-backyard/
-│       └── ...
-└── video/
-    ├── YYYY/
-    │   └── MM/
-    │       ├── cam-frontdoor/
-    │       │   ├── 15s/
-    │       │   │   └── cam-frontdoor_YYYYMMDD_15s.mp4
-    │       │   └── 60s/
-    │       │       └── cam-frontdoor_YYYYMMDD_60s.mp4
-    │       └── cam-backyard/
-    │           └── ...
+│   └── [camera_name]/
+│       └── [interval]s/
+│           └── YYYY/MM/DD/
+│               └── [camera_name]_[timestamp].jpg
+└── videos/
+    └── YYYY/MM/
+        └── [camera_name]/
+            └── [interval]s/
+                └── [camera_name]_YYYYMMDD_[interval]s.mp4
 ```
 
-## Advanced Topics
+Example:
+```
+output/
+├── images/
+│   ├── Front_Door_Cam/
+│   │   ├── 60s/
+│   │   │   └── 2025/06/15/
+│   │   │       └── Front_Door_Cam_1718456400.jpg
+│   │   └── 180s/
+│   │       └── 2025/06/15/
+│   └── Garage_Cam/
+│       └── 60s/
+│           └── 2025/06/15/
+└── videos/
+    └── 2025/06/
+        ├── Front_Door_Cam/
+        │   ├── 60s/
+        │   │   └── Front_Door_Cam_20250615_60s.mp4
+        │   └── 180s/
+        │       └── Front_Door_Cam_20250615_180s.mp4
+        └── Garage_Cam/
+            └── 60s/
+                └── Garage_Cam_20250615_60s.mp4
+```
 
-### Smart Interval Optimization
+## Advanced Configuration
 
-When multiple intervals are configured for the same camera (e.g., 60s and 180s), the application can intelligently copy images between intervals instead of making redundant camera requests:
+### High Quality Video Settings
+For maximum quality videos (larger file sizes):
+```yaml
+FFMPEG_CRF: "18"                    # Higher quality
+FFMPEG_PRESET: "slow"               # Better compression
+FFMPEG_PIXEL_FORMAT: "yuv444p"     # Full color information
+```
 
-- For example, with intervals of 60s and 180s:
-  - The 60s interval captures fresh images every minute
-  - The 180s interval will use copies from the 60s interval (specifically the 1st, 4th, 7th images) rather than making separate requests
-  
-This provides several benefits:
-- Reduces camera and network load
-- Improves reliability
-- Speeds up processing
-- Maintains proper timing across all intervals
+### Fast Processing Settings
+For faster processing (lower quality):
+```yaml
+FFMPEG_CRF: "28"                    # Lower quality
+FFMPEG_PRESET: "fast"               # Faster encoding
+FFMPEG_CONCURRENT_CREATION: "4"    # More parallel jobs
+```
 
-The summary logs will show how many images were freshly captured versus copied from other intervals.
+### Custom Interval Examples
+```yaml
+# Multiple intervals for different purposes
+FETCH_INTERVALS: '[30, 300, 900]'   # 30s, 5min, 15min
+
+# High frequency for detailed capture
+FETCH_INTERVALS: '[10, 60]'         # 10s, 1min
+
+# Low frequency for overview
+FETCH_INTERVALS: '[300, 3600]'      # 5min, 1hour
+```
+
+### Multiple Site Deployment
+To monitor multiple UniFi Protect sites, create separate services:
+
+```yaml
+name: unifi_protect_time_lapse_multi
+
+services:
+  site_main:
+    container_name: unifi_protect_time_lapse_main
+    image: lux4rd0/unifi_protect_time_lapse:latest
+    volumes:
+      - ./output_main:/app/unifi_protect_time_lapse/output:rw
+    environment:
+      UNIFI_PROTECT_API_KEY: "main_site_api_key"
+      UNIFI_PROTECT_BASE_URL: "https://main.example.com/proxy/protect/integration/v1"
+      # ... other settings
+      
+  site_remote:
+    container_name: unifi_protect_time_lapse_remote
+    image: lux4rd0/unifi_protect_time_lapse:latest
+    volumes:
+      - ./output_remote:/app/unifi_protect_time_lapse/output:rw
+    environment:
+      UNIFI_PROTECT_API_KEY: "remote_site_api_key"
+      UNIFI_PROTECT_BASE_URL: "https://remote.example.com/proxy/protect/integration/v1"
+      # ... other settings
+```
+
+## Monitoring and Status
 
 ### Detailed Status Summaries
 
-The application can provide detailed summaries at configurable intervals (default: hourly) showing:
+The application provides detailed summaries at configurable intervals showing:
 
 - Overall success and failure rates
 - Per-camera performance statistics
-- Average fetch times for each camera
-- Number of copied vs. freshly captured images when optimization is enabled
+- Number of connected vs disconnected cameras
+- Image quality information (HD vs Standard)
 
 Example summary:
 ```
-Summary for 60s interval (last 1 hour):
-- Overall: 295 successful, 5 failed, 120 copied from other intervals
-- cam-frontdoor: 60/60 successful (100.0%), 25 copied, avg time: 0.32s
-- cam-backyard: 58/60 successful (96.7%), 20 copied, avg time: 0.45s
-...
+Fetch Summary (last 60.0 minutes):
+  60s: 358/360 successful (99.4%), last: 09:59:50
+    Front_Door_Cam: 358/360 (99.4%)
+    Garage_Cam: 360/360 (100.0%)
+  180s: 120/120 successful (100.0%), last: 09:57:00
 ```
 
-To adjust the frequency of summaries, change `UNIFI_PROTECT_TIME_LAPSE_SUMMARY_INTERVAL_SECONDS` (e.g., set to 1800 for 30-minute summaries).
+### Camera Status Information
 
-### Quality Presets
-
-The application offers three quality presets for video generation:
-
-1. **medium** (default): Good balance between quality and file size
-   - CRF: 25
-   - Preset: medium
-   - Pixel Format: yuv420p
-
-2. **high**: Highest quality, larger file size
-   - CRF: 18
-   - Preset: slow
-   - Pixel Format: yuv444p
-   - Full color space settings
-
-3. **custom**: Define your own settings using the custom environment variables
-
-### Frame Capture Techniques
-
-The application offers three techniques for capturing frames from RTSP streams:
-
-1. **standard** (default): Captures a single frame directly from the stream
-   - Simple and fast
-   - May show motion blur in high-movement scenarios
-   - Can produce corrupted or incomplete frames, especially with "Enhanced" encoding
-
-2. **iframe**: Only captures I-frames (keyframes) from the stream
-   - Higher quality images with less compression artifacts
-   - Reduces motion blur in windy conditions
-   - May take slightly longer to capture as it waits for an I-frame
-   - Recommended for most Unifi Protect setups
-
-3. **blend**: Blends multiple consecutive frames together
-   - Reduces motion blur by averaging movement
-   - Good for cameras mounted on unstable surfaces
-   - Requires more processing time
-
-Example configuration for a camera with high movement:
-
-```yaml
-UNIFI_PROTECT_TIME_LAPSE_CAPTURE_TECHNIQUE: 'iframe'
-UNIFI_PROTECT_TIME_LAPSE_IFRAME_TIMEOUT: '2.0'
+At startup and during operation, you'll see detailed camera information:
+```
+Available cameras: "Front Door Cam", "Garage Cam", "Backyard Cam"
+  ✓ Front Door Cam (CONNECTED) - G4-Doorbell [HD]
+  ✓ Garage Cam (CONNECTED) - G4-Pro [HD]  
+  ✗ Backyard Cam (DISCONNECTED) - G3-Instant [SD]
 ```
 
-For very unstable cameras, the blend technique may work better:
-
-```yaml
-UNIFI_PROTECT_TIME_LAPSE_CAPTURE_TECHNIQUE: 'blend'
-UNIFI_PROTECT_TIME_LAPSE_BLEND_FRAMES: '2'
-```
-
-### Unifi Protect Encoding Settings
-
-Unifi Protect offers two encoding modes that can affect image capture quality:
-
-1. **Enhanced**: Improves video quality while reducing storage size and optimizing streaming
-   - Uses more aggressive compression with fewer I-frames
-   - May cause issues with the `standard` capture technique
-   - Recommended to use with the `iframe` capture technique
-
-2. **Standard**: Improves playback compatibility for older devices
-   - Uses less aggressive compression with more frequent I-frames
-   - Works better with all capture techniques
-   - May use more storage space on your Unifi Protect system
-
-If you're experiencing blurry or corrupted images with the `standard` capture technique, consider either:
-- Switching your cameras to "Standard" encoding mode in Unifi Protect settings, or
-- Using the `iframe` capture technique in this application
-
-### Multiple Site Deployment
-
-To monitor multiple Protect sites, create separate Docker Compose configurations for each site:
-
-```yaml
-services:
-  unifi_protect_time_lapse_site1:
-    # Site 1 configuration...
-    
-  unifi_protect_time_lapse_site2:
-    # Site 2 configuration...
-```
+Legend:
+- `✓` = Connected camera
+- `✗` = Disconnected camera  
+- `[HD]` = Supports high-quality snapshots
+- `[SD]` = Standard quality only
 
 ## Troubleshooting
 
-### No Images Being Captured
+### API Connection Issues
 
-- Verify your Protect host is accessible
-- Check that RTSP is enabled for your cameras
-- Verify the stream IDs are correct
-- Look at the container logs: `docker logs unifi_protect_time_lapse`
+**No cameras discovered:**
+- Verify your API key is correct
+- Check that the base URL is accessible
+- Ensure your UniFi Protect system supports the integration API
 
-### Video Creation Fails
+**API key errors:**
+- Go to Control Plane → Integrations → Your API Keys in UniFi Protect
+- Generate a new API key
+- Make sure the API key has the necessary permissions
 
-- Check that you have enough disk space
-- Verify there are images available for the time period
-- Check the container logs for FFMPEG errors
+### Camera Issues
 
-### RTSPS Connection Issues
+**Cameras not being captured:**
+- Check camera selection mode and whitelist/blacklist settings
+- Verify camera names match exactly (check logs for "Available cameras")
+- Ensure cameras are connected and online in UniFi Protect
 
-- Verify your network allows connections to the RTSPS port
-- Check that your Protect system has RTSP enabled
-- Try increasing the timeout percentage
+**Some cameras fail with "400 Bad Request":**
+- This usually means the camera doesn't support high-quality snapshots
+- The application will automatically detect this and use standard quality
+- Check logs for `[HD]` vs `[SD]` indicators
 
-### Motion Blur or Corrupted Images
+### Video Creation Issues
 
-- If using "Enhanced" encoding mode in Unifi Protect, switch to the `iframe` capture technique
-- For outdoor cameras subject to wind, use the `iframe` or `blend` techniques
-- Consider switching problem cameras to "Standard" encoding mode in Unifi Protect
-- For severe cases, increase the `UNIFI_PROTECT_TIME_LAPSE_IFRAME_TIMEOUT` to allow more time to find a good I-frame
-- Check the container logs to verify which technique is being used
+**No videos created:**
+- Check that images were captured successfully
+- Verify there are enough images for the time period
+- Check container logs for FFmpeg errors
+- Ensure sufficient disk space
 
-### Interval Optimization Issues
+**Video quality issues:**
+- Adjust `FFMPEG_CRF` (lower values = higher quality)
+- Change `FFMPEG_PRESET` to "slow" for better compression
+- Use `yuv444p` pixel format for full color information
 
-- If interval optimization is causing timing issues, verify that the intervals are proper multiples of each other
-- For complex interval patterns, you may need to disable optimization by setting `UNIFI_PROTECT_TIME_LAPSE_OPTIMIZE_INTERVAL_FETCHING` to `false`
-- Check the summary logs to see if images are being properly copied between intervals
+### Performance Issues
+
+**High API load:**
+- Increase `CAMERA_REFRESH_INTERVAL` to check for cameras less frequently
+- Reduce `FETCH_CONCURRENT_LIMIT` to limit simultaneous requests
+- Use longer capture intervals
+
+**Slow video creation:**
+- Increase `FFMPEG_CONCURRENT_CREATION` for more parallel jobs
+- Use faster presets like "fast" or "veryfast"
+- Consider using a higher CRF value for faster encoding
+
+### Network Issues
+
+**SSL certificate errors:**
+```yaml
+UNIFI_PROTECT_VERIFY_SSL: "false"
+```
+
+**Timeout issues:**
+```yaml
+UNIFI_PROTECT_REQUEST_TIMEOUT: "60"  # Increase timeout
+```
+
+**Connection refused:**
+- Verify the UniFi Protect hostname/IP is correct
+- Check that the integration API is enabled
+- Ensure network connectivity between Docker and UniFi Protect
+
+## Migration from RTSP Version
+
+If you're migrating from the older RTSP-based version:
+
+### Configuration Changes
+
+1. **Replace RTSP settings with API settings:**
+   ```yaml
+   # Old RTSP settings (remove these)
+   # UNIFI_PROTECT_TIME_LAPSE_PROTECT_HOST: unifi.local
+   # UNIFI_PROTECT_TIME_LAPSE_PROTECT_PORT: '7441'
+   
+   # New API settings (add these)
+   UNIFI_PROTECT_API_KEY: "your_api_key_here"
+   UNIFI_PROTECT_BASE_URL: "https://unifi.local/proxy/protect/integration/v1"
+   ```
+
+2. **Simplify camera configuration:**
+   ```yaml
+   # Old complex camera config (remove this)
+   # UNIFI_PROTECT_TIME_LAPSE_CAMERAS_CONFIG: '[{"name":"cam-front","stream_id":"abc123","intervals":[60]}]'
+   
+   # New simple config (add these)
+   CAMERA_SELECTION_MODE: "whitelist"
+   CAMERA_WHITELIST: '["Front Door Cam"]'
+   FETCH_INTERVALS: '[60]'
+   ```
+
+3. **Update environment variable names:**
+   - Most variables have been simplified (remove `UNIFI_PROTECT_TIME_LAPSE_` prefix)
+   - Check the environmental variables table above for current names
+
+### Benefits of Migration
+
+- **99% more reliable** - no more RTSP connection issues
+- **Simpler configuration** - no manual stream ID management
+- **Better performance** - direct API calls instead of video stream processing  
+- **Automatic discovery** - finds cameras automatically
+- **Smart quality** - uses best quality each camera supports
+- **Better error handling** - comprehensive retry and recovery logic
+
+## Support and Resources
+
+- **Repository**: https://github.com/lux4rd0/unifi_protect_time_lapse
+- **Documentation**: https://labs.lux4rd0.com/applications/unifi-protect-time-lapse/
+- **Docker Hub**: https://hub.docker.com/r/lux4rd0/unifi_protect_time_lapse
+
+For issues and feature requests, please use the GitHub repository's issue tracker.
