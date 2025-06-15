@@ -15,12 +15,14 @@ UniFi Protect Time-lapse connects to your UniFi Protect system via its REST API 
 - **Better Error Handling**: Comprehensive retry logic and graceful handling of disconnected cameras
 - **Flexible Camera Selection**: Whitelist, blacklist, or capture all cameras
 - **Modern Architecture**: Built with async/await for high performance
+- **Image Reuse Optimization**: Intelligently reuses images between intervals to reduce camera load
 
 ### Features
 
 - **Multiple Capture Intervals**: Configure different capture frequencies (e.g., every 60 seconds, every 3 minutes)
 - **Automatic Camera Discovery**: No need for manual stream ID configuration
 - **Smart Quality Selection**: Uses high-quality snapshots when cameras support it
+- **Image Reuse Optimization**: Automatically reuses images from shorter intervals when aligned
 - **Detailed Status Summaries**: Get regular summaries showing success rates and performance for each camera
 - **Configurable Video Quality**: Choose between different video quality presets or create custom settings
 - **Flexible Camera Selection**: Choose which cameras to include via whitelist, blacklist, or capture all
@@ -79,6 +81,16 @@ services:
       
       # Fetch intervals in seconds
       FETCH_INTERVALS: '[60, 180]'
+
+      # =============================================================================
+      # FETCH SETTINGS
+      # =============================================================================
+      FETCH_ENABLED: "true"
+      FETCH_TOP_OF_THE_MINUTE: "true"
+      FETCH_MAX_RETRIES: "3"
+      FETCH_RETRY_DELAY: "2"
+      FETCH_CONCURRENT_LIMIT: "5"
+      FETCH_IMAGE_REUSE_DELAY: "2.0"  # Delay before attempting image reuse (seconds)
 
       # =============================================================================
       # TIME-LAPSE SETTINGS
@@ -141,6 +153,7 @@ services:
 | `FETCH_MAX_RETRIES` | Maximum retry attempts for failed captures | `3` | `5` |
 | `FETCH_RETRY_DELAY` | Delay between retries in seconds | `2` | `5` |
 | `FETCH_CONCURRENT_LIMIT` | Maximum concurrent API requests | `5` | `10` |
+| `FETCH_IMAGE_REUSE_DELAY` | Delay before attempting image reuse (seconds) | `2.0` | `1.0` |
 
 ### Time-lapse Settings
 
@@ -194,6 +207,49 @@ CAMERA_WHITELIST: '["Front Door Cam", "Garage Cam", "Backyard Cam"]'
 ```yaml
 CAMERA_SELECTION_MODE: "blacklist"
 CAMERA_BLACKLIST: '["Private Bedroom Cam", "Office Camera"]'
+```
+
+## Image Reuse Optimization
+
+One of the key performance features is automatic image reuse between intervals. When you configure multiple intervals that are mathematically related (e.g., 60s and 180s), the application automatically reuses images instead of making duplicate API calls.
+
+### How It Works
+
+**Example with 60s and 180s intervals:**
+
+- **14:39:00** - Both 60s and 180s capture fresh images
+- **14:40:00** - Only 60s captures fresh images
+- **14:41:00** - Only 60s captures fresh images  
+- **14:42:00** - 60s captures fresh + 180s **reuses** from 60s
+- **14:43:00** - Only 60s captures fresh images
+- **14:44:00** - Only 60s captures fresh images
+- **14:45:00** - 60s captures fresh + 180s **reuses** from 60s
+
+### Benefits
+
+- **Reduced Camera Load**: 66% fewer API calls for longer intervals
+- **Better Performance**: File copying is much faster than camera snapshots
+- **Lower Network Usage**: Fewer API requests to your UniFi Protect system
+- **Improved Reliability**: Less chance of camera timeouts or network issues
+
+### Configuration Tips
+
+For optimal reuse, configure intervals that divide evenly:
+```yaml
+# Good: 180 ÷ 60 = 3 (perfect alignment every 3rd capture)
+FETCH_INTERVALS: '[60, 180]'
+
+# Good: 900 ÷ 300 = 3, 300 ÷ 60 = 5  
+FETCH_INTERVALS: '[60, 300, 900]'
+
+# Less optimal: 90 doesn't divide evenly into 180
+FETCH_INTERVALS: '[90, 180]'
+```
+
+The application will automatically detect and log optimization opportunities:
+```
+Interval optimization: 180s will reuse images from 60s when aligned
+180s: ✅ Will be able to reuse images from 60s interval
 ```
 
 ## Usage Commands
@@ -291,6 +347,23 @@ FETCH_INTERVALS: '[10, 60]'         # 10s, 1min
 
 # Low frequency for overview
 FETCH_INTERVALS: '[300, 3600]'      # 5min, 1hour
+
+# Optimized for reuse
+FETCH_INTERVALS: '[60, 180, 900]'   # Perfect mathematical alignment
+```
+
+### Performance Tuning
+
+For systems with fast storage (SSD/NVMe):
+```yaml
+FETCH_IMAGE_REUSE_DELAY: "1.0"     # Faster reuse detection
+FETCH_CONCURRENT_LIMIT: "10"       # More concurrent requests
+```
+
+For systems with slower storage (network drives):
+```yaml
+FETCH_IMAGE_REUSE_DELAY: "3.0"     # More time for file writes
+FETCH_CONCURRENT_LIMIT: "3"        # Fewer concurrent requests
 ```
 
 ### Multiple Site Deployment
@@ -331,6 +404,7 @@ The application provides detailed summaries at configurable intervals showing:
 - Per-camera performance statistics
 - Number of connected vs disconnected cameras
 - Image quality information (HD vs Standard)
+- Image reuse statistics
 
 Example summary:
 ```
@@ -338,7 +412,9 @@ Fetch Summary (last 60.0 minutes):
   60s: 358/360 successful (99.4%), last: 09:59:50
     Front_Door_Cam: 358/360 (99.4%)
     Garage_Cam: 360/360 (100.0%)
-  180s: 120/120 successful (100.0%), last: 09:57:00
+  180s: 120/120 successful (100.0%), 80 reused, last: 09:57:00
+    Front_Door_Cam: 120/120 (100.0%)
+    Garage_Cam: 120/120 (100.0%)
 ```
 
 ### Camera Status Information
@@ -356,6 +432,17 @@ Legend:
 - `✗` = Disconnected camera  
 - `[HD]` = Supports high-quality snapshots
 - `[SD]` = Standard quality only
+
+### Image Reuse Status
+
+When intervals are properly aligned, you'll see optimization messages:
+```
+Interval optimization: 180s will reuse images from 60s when aligned
+180s: ✅ Will be able to reuse images from 60s interval
+180s: Attempting to reuse images from 60s interval at timestamp 1750016340
+180s: Successfully reused 7 images from 60s interval
+180s: Reused 7 images from smaller intervals
+```
 
 ## Troubleshooting
 
@@ -383,6 +470,18 @@ Legend:
 - The application will automatically detect this and use standard quality
 - Check logs for `[HD]` vs `[SD]` indicators
 
+### Image Reuse Issues
+
+**Images not being reused despite aligned intervals:**
+- Check that `FETCH_IMAGE_REUSE_DELAY` allows enough time for file writes
+- Verify intervals are mathematically aligned (larger ÷ smaller = whole number)
+- Look for alignment verification messages in logs
+
+**Reuse failing with file not found errors:**
+- Increase `FETCH_IMAGE_REUSE_DELAY` for slower storage systems
+- Check filesystem permissions and available disk space
+- Verify both interval directories exist and are writable
+
 ### Video Creation Issues
 
 **No videos created:**
@@ -402,11 +501,17 @@ Legend:
 - Increase `CAMERA_REFRESH_INTERVAL` to check for cameras less frequently
 - Reduce `FETCH_CONCURRENT_LIMIT` to limit simultaneous requests
 - Use longer capture intervals
+- Ensure intervals are properly aligned for image reuse
 
 **Slow video creation:**
 - Increase `FFMPEG_CONCURRENT_CREATION` for more parallel jobs
 - Use faster presets like "fast" or "veryfast"
 - Consider using a higher CRF value for faster encoding
+
+**Storage performance:**
+- For fast storage: Reduce `FETCH_IMAGE_REUSE_DELAY` to 1.0s
+- For slow storage: Increase `FETCH_IMAGE_REUSE_DELAY` to 3.0s or higher
+- Monitor disk I/O during operation
 
 ### Network Issues
 
@@ -465,6 +570,7 @@ If you're migrating from the older RTSP-based version:
 - **Automatic discovery** - finds cameras automatically
 - **Smart quality** - uses best quality each camera supports
 - **Better error handling** - comprehensive retry and recovery logic
+- **Image reuse optimization** - significant reduction in API calls and camera load
 
 ## Support and Resources
 
