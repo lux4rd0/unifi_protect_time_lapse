@@ -71,6 +71,10 @@ class Camera:
         Returns:
             Offset in seconds (0 to 59)
         """
+        # Handle case where no distribution is needed
+        if offset_seconds <= 0:
+            return 0
+
         # Use camera ID for maximum stability - never changes
         hash_obj = hashlib.sha1(self.id.encode("utf-8"))
         hash_int = int(hash_obj.hexdigest(), 16)
@@ -531,7 +535,67 @@ class CameraManager:
         # Calculate optimal offset based on current camera count
         optimal_offset = config.calculate_optimal_offset_seconds(len(connected_cameras))
 
-        # Group cameras by their offset
+        # Handle case where optimal offset is 0 (no distribution needed)
+        if optimal_offset == 0:
+            # No distribution - capture all cameras immediately
+            logging.debug(
+                f"[{interval}s] No distribution needed, capturing all cameras immediately"
+            )
+
+            # Create semaphore for all cameras
+            concurrent_limit = config.calculate_effective_concurrent_limit()
+            semaphore = asyncio.Semaphore(min(len(connected_cameras), concurrent_limit))
+
+            async def capture_camera_no_distribution(
+                camera: Camera,
+            ) -> tuple[str, bool]:
+                async with semaphore:
+                    # Build output path using base timestamp
+                    date_obj = datetime.fromtimestamp(timestamp)
+                    year = date_obj.strftime("%Y")
+                    month = date_obj.strftime("%m")
+                    day = date_obj.strftime("%d")
+
+                    output_dir = (
+                        config.IMAGE_OUTPUT_PATH
+                        / camera.safe_name
+                        / f"{interval}s"
+                        / year
+                        / month
+                        / day
+                    )
+                    output_path = output_dir / f"{camera.safe_name}_{timestamp}.jpg"
+
+                    success = await self.capture_snapshot_with_retry(
+                        camera, str(output_path), interval
+                    )
+                    return camera.name, success
+
+            # Execute all captures concurrently
+            tasks = [
+                capture_camera_no_distribution(camera) for camera in connected_cameras
+            ]
+            results = await asyncio.gather(*tasks, return_exceptions=True)
+
+            # Process results
+            all_results = {}
+            for result in results:
+                if isinstance(result, tuple):
+                    camera_name, success = result
+                    all_results[camera_name] = success
+                else:
+                    logging.error(f"Unexpected error in camera capture: {result}")
+
+            # Log summary
+            successful = sum(1 for success in all_results.values() if success)
+            total = len(all_results)
+            logging.info(
+                f"[{interval}s] Captured {successful}/{total} connected cameras (no distribution)"
+            )
+
+            return all_results
+
+        # Group cameras by their offset (only if distribution is enabled)
         camera_groups: Dict[int, List[Camera]] = defaultdict(list)
         for camera in connected_cameras:
             offset = camera.get_deterministic_offset(optimal_offset)
