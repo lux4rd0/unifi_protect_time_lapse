@@ -9,20 +9,22 @@ UniFi Protect Time-lapse connects to your UniFi Protect system via its REST API 
 ### Key Improvements in This Version
 
 - **API-based**: Uses UniFi Protect's REST API instead of RTSP streams for much better reliability
+- **Rate-Limit Aware**: Automatically respects UniFi Protect's 10 req/sec rate limit with intelligent camera distribution
 - **Simplified Configuration**: No more complex stream IDs - just use camera names
 - **Automatic Camera Discovery**: Discovers all cameras automatically from your UniFi Protect system
 - **Smart Quality Detection**: Automatically detects which cameras support high-quality snapshots
 - **Better Error Handling**: Comprehensive retry logic and graceful handling of disconnected cameras
 - **Flexible Camera Selection**: Whitelist, blacklist, or capture all cameras
 - **Modern Architecture**: Built with async/await for high performance
-- **Image Reuse Optimization**: Intelligently reuses images between intervals to reduce camera load
 
 ### Features
 
+- **Rate Limit Compliance**: Automatically calculates optimal timing to stay within UniFi Protect's API limits
+- **Intelligent Camera Distribution**: Spreads camera requests across time to avoid overwhelming the system
 - **Multiple Capture Intervals**: Configure different capture frequencies (e.g., every 60 seconds, every 3 minutes)
 - **Automatic Camera Discovery**: No need for manual stream ID configuration
 - **Smart Quality Selection**: Uses high-quality snapshots when cameras support it
-- **Image Reuse Optimization**: Automatically reuses images from shorter intervals when aligned
+- **System Validation**: Validates configuration against rate limits before starting
 - **Detailed Status Summaries**: Get regular summaries showing success rates and performance for each camera
 - **Configurable Video Quality**: Choose between different video quality presets or create custom settings
 - **Flexible Camera Selection**: Choose which cameras to include via whitelist, blacklist, or capture all
@@ -73,6 +75,12 @@ services:
       SNAPSHOT_HIGH_QUALITY: "true"   # Request high resolution snapshots when supported
 
       # =============================================================================
+      # RATE LIMITING (UniFi Protect API Limits)
+      # =============================================================================
+      UNIFI_PROTECT_RATE_LIMIT: "10"        # UniFi Protect's actual rate limit (req/sec)
+      RATE_LIMIT_SAFETY_BUFFER: "0.8"       # Use 80% of rate limit for safety
+
+      # =============================================================================
       # CAMERA CONFIGURATION
       # =============================================================================
       CAMERA_SELECTION_MODE: "all"  # Options: "all", "whitelist", "blacklist"
@@ -83,14 +91,36 @@ services:
       FETCH_INTERVALS: '[60, 180]'
 
       # =============================================================================
-      # FETCH SETTINGS
+      # FETCH SETTINGS (Rate-Limit Aware)
       # =============================================================================
       FETCH_ENABLED: "true"
       FETCH_TOP_OF_THE_MINUTE: "true"
       FETCH_MAX_RETRIES: "3"
       FETCH_RETRY_DELAY: "2"
-      FETCH_CONCURRENT_LIMIT: "5"
-      FETCH_IMAGE_REUSE_DELAY: "2.0"  # Delay before attempting image reuse (seconds)
+
+      # Concurrent limiting - auto-calculates based on rate limits
+      FETCH_CONCURRENT_LIMIT_MODE: "auto"        # "auto" = calculate from rate limits, "manual" = use manual setting
+      FETCH_CONCURRENT_LIMIT_MANUAL: "5"         # Only used if mode = "manual"
+
+      # =============================================================================
+      # CAMERA DISTRIBUTION (Automatic Rate Limit Protection)
+      # =============================================================================
+      FETCH_ENABLE_CAMERA_DISTRIBUTION: "auto"     # auto (smart), true (always), false (never)
+      FETCH_DISTRIBUTION_STRATEGY: "adaptive"      # adaptive (calculate from rate limits), fixed (use offset below)
+      
+      # Auto mode thresholds
+      FETCH_DISTRIBUTION_MIN_CAMERAS: "4"          # No distribution if ≤ this many cameras
+      
+      # Distribution timing calculation (when strategy="adaptive")
+      FETCH_DISTRIBUTION_WINDOW_SECONDS: "60"      # Spread cameras across this time window
+      FETCH_MIN_OFFSET_SECONDS: "1"                # Minimum time between camera groups
+      FETCH_MAX_OFFSET_SECONDS: "15"               # Maximum time between camera groups
+      
+      # Fixed offset (when strategy="fixed")
+      FETCH_CAMERA_OFFSET_SECONDS: "5"             # Fixed seconds between camera groups
+      
+      # Monitoring and diagnostics
+      FETCH_LOG_SLOT_UTILIZATION: "true"           # Show camera slot assignments in logs
 
       # =============================================================================
       # TIME-LAPSE SETTINGS
@@ -135,6 +165,13 @@ services:
 | `CAMERA_REFRESH_INTERVAL` | How often to check for new/reconnected cameras (seconds) | `300` | `60` |
 | `SNAPSHOT_HIGH_QUALITY` | Request high resolution snapshots when supported | `true` | `false` |
 
+### Rate Limiting Configuration
+
+| Variable | Description | Default | Example |
+|----------|-------------|---------|---------|
+| `UNIFI_PROTECT_RATE_LIMIT` | UniFi Protect's API rate limit (requests per second) | `10` | `15` |
+| `RATE_LIMIT_SAFETY_BUFFER` | Percentage of rate limit to use (0.0-1.0) | `0.8` | `0.9` |
+
 ### Camera Configuration
 
 | Variable | Description | Default | Example |
@@ -144,7 +181,7 @@ services:
 | `CAMERA_BLACKLIST` | JSON array of camera names to exclude (blacklist mode) | `[]` | `'["Private Cam"]'` |
 | `FETCH_INTERVALS` | JSON array of capture intervals in seconds | `[10, 60]` | `[30, 300, 900]` |
 
-### Fetch Settings
+### Fetch Settings (Rate-Limit Aware)
 
 | Variable | Description | Default | Example |
 |----------|-------------|---------|---------|
@@ -152,8 +189,21 @@ services:
 | `FETCH_TOP_OF_THE_MINUTE` | Align captures to minute boundaries | `true` | `false` |
 | `FETCH_MAX_RETRIES` | Maximum retry attempts for failed captures | `3` | `5` |
 | `FETCH_RETRY_DELAY` | Delay between retries in seconds | `2` | `5` |
-| `FETCH_CONCURRENT_LIMIT` | Maximum concurrent API requests | `5` | `10` |
-| `FETCH_IMAGE_REUSE_DELAY` | Delay before attempting image reuse (seconds) | `2.0` | `1.0` |
+| `FETCH_CONCURRENT_LIMIT_MODE` | Concurrent limit calculation mode | `auto` | `manual` |
+| `FETCH_CONCURRENT_LIMIT_MANUAL` | Manual concurrent limit (when mode=manual) | `5` | `10` |
+
+### Camera Distribution (Automatic Rate Limit Protection)
+
+| Variable | Description | Default | Example |
+|----------|-------------|---------|---------|
+| `FETCH_ENABLE_CAMERA_DISTRIBUTION` | Enable camera distribution | `auto` | `true`, `false` |
+| `FETCH_DISTRIBUTION_STRATEGY` | Distribution calculation strategy | `adaptive` | `fixed` |
+| `FETCH_DISTRIBUTION_MIN_CAMERAS` | Minimum cameras to enable distribution | `4` | `2` |
+| `FETCH_DISTRIBUTION_WINDOW_SECONDS` | Time window for distribution | `60` | `120` |
+| `FETCH_MIN_OFFSET_SECONDS` | Minimum offset between groups | `1` | `2` |
+| `FETCH_MAX_OFFSET_SECONDS` | Maximum offset between groups | `15` | `30` |
+| `FETCH_CAMERA_OFFSET_SECONDS` | Fixed offset (when strategy=fixed) | `5` | `10` |
+| `FETCH_LOG_SLOT_UTILIZATION` | Log camera slot assignments | `true` | `false` |
 
 ### Time-lapse Settings
 
@@ -190,6 +240,53 @@ services:
 | `SUMMARY_ENABLED` | Enable periodic summary logs | `true` | `false` |
 | `SUMMARY_INTERVAL_SECONDS` | Seconds between summary logs | `3600` | `1800` |
 
+## Rate Limit Management
+
+This application automatically manages UniFi Protect's API rate limits (10 requests per second) through several mechanisms:
+
+### Automatic Rate Limit Detection
+
+The system automatically:
+- Detects how many intervals might execute simultaneously
+- Calculates safe concurrent limits based on your camera count
+- Warns if your configuration might exceed rate limits
+- Suggests optimal settings for your deployment size
+
+### Camera Distribution
+
+For larger deployments (4+ cameras), the system automatically distributes camera requests across time:
+
+```
+Example with 12 cameras:
+21:30:00 - Cameras 1-4 capture
+21:30:05 - Cameras 5-8 capture  
+21:30:10 - Cameras 9-12 capture
+```
+
+This ensures you never exceed the 10 req/sec limit while maintaining precise timing.
+
+### Rate Limit Configuration Examples
+
+**Small deployment (≤5 cameras):**
+```yaml
+FETCH_CONCURRENT_LIMIT_MODE: "auto"        # System calculates optimal limits
+FETCH_ENABLE_CAMERA_DISTRIBUTION: "auto"   # Enables distribution if needed
+```
+
+**Large deployment (20+ cameras):**
+```yaml
+UNIFI_PROTECT_RATE_LIMIT: "10"            # UniFi's actual limit
+RATE_LIMIT_SAFETY_BUFFER: "0.8"           # Use 80% for safety
+FETCH_ENABLE_CAMERA_DISTRIBUTION: "true"   # Always enable distribution
+FETCH_DISTRIBUTION_STRATEGY: "adaptive"    # Calculate optimal timing
+```
+
+**Custom rate limiting:**
+```yaml
+FETCH_CONCURRENT_LIMIT_MODE: "manual"      # Manual control
+FETCH_CONCURRENT_LIMIT_MANUAL: "3"         # Never more than 3 simultaneous requests
+```
+
 ## Camera Selection Examples
 
 ### Capture All Cameras
@@ -209,52 +306,15 @@ CAMERA_SELECTION_MODE: "blacklist"
 CAMERA_BLACKLIST: '["Private Bedroom Cam", "Office Camera"]'
 ```
 
-## Image Reuse Optimization
-
-One of the key performance features is automatic image reuse between intervals. When you configure multiple intervals that are mathematically related (e.g., 60s and 180s), the application automatically reuses images instead of making duplicate API calls.
-
-### How It Works
-
-**Example with 60s and 180s intervals:**
-
-- **14:39:00** - Both 60s and 180s capture fresh images
-- **14:40:00** - Only 60s captures fresh images
-- **14:41:00** - Only 60s captures fresh images  
-- **14:42:00** - 60s captures fresh + 180s **reuses** from 60s
-- **14:43:00** - Only 60s captures fresh images
-- **14:44:00** - Only 60s captures fresh images
-- **14:45:00** - 60s captures fresh + 180s **reuses** from 60s
-
-### Benefits
-
-- **Reduced Camera Load**: 66% fewer API calls for longer intervals
-- **Better Performance**: File copying is much faster than camera snapshots
-- **Lower Network Usage**: Fewer API requests to your UniFi Protect system
-- **Improved Reliability**: Less chance of camera timeouts or network issues
-
-### Configuration Tips
-
-For optimal reuse, configure intervals that divide evenly:
-```yaml
-# Good: 180 ÷ 60 = 3 (perfect alignment every 3rd capture)
-FETCH_INTERVALS: '[60, 180]'
-
-# Good: 900 ÷ 300 = 3, 300 ÷ 60 = 5  
-FETCH_INTERVALS: '[60, 300, 900]'
-
-# Less optimal: 90 doesn't divide evenly into 180
-FETCH_INTERVALS: '[90, 180]'
-```
-
-The application will automatically detect and log optimization opportunities:
-```
-Interval optimization: 180s will reuse images from 60s when aligned
-180s: ✅ Will be able to reuse images from 60s interval
-```
-
 ## Usage Commands
 
 The application supports several command-line modes for testing and manual operation:
+
+### Validate System Configuration
+```bash
+docker exec your_container python3 main.py validate
+```
+This checks if your configuration will exceed rate limits before starting.
 
 ### Test Camera Connectivity
 ```bash
@@ -274,6 +334,52 @@ docker exec your_container python3 main.py fetch
 ### Run Only Video Creation
 ```bash
 docker exec your_container python3 main.py timelapse
+```
+
+## System Status and Monitoring
+
+### Startup Validation
+
+The application validates your configuration at startup:
+
+```
+✅ Rate limit compliance: Configuration should stay within limits
+✅ System capacity validation passed
+
+Connected cameras: 15
+Max simultaneous intervals: 2
+Effective concurrent limit: 4
+Rate limit analysis: limit=10 req/sec, effective=8 req/sec, max_intervals=2, concurrent_limit=4
+```
+
+### Camera Distribution Logging
+
+When camera distribution is enabled, you'll see detailed slot assignments:
+
+```
+Camera distribution ENABLED: 15 cameras, strategy: adaptive, offset: 8s
+Camera slot assignments (deterministic):
+  Slot 0 (+0s): Front Door Cam, Garage Cam, Backyard Cam, Kitchen Cam
+  Slot 1 (+8s): Living Room Cam, Bedroom Cam, Office Cam, Basement Cam
+  Slot 2 (+16s): Patio Cam, Driveway Cam, Side Yard Cam
+```
+
+### Interval-Specific Logging
+
+All operations are clearly tagged by interval:
+
+```
+[60s] Captured 15/15 connected cameras (distributed across 3 groups, 8s offset)
+[180s] Captured 15/15 connected cameras (distributed across 3 groups, 8s offset)
+```
+
+### Rate Limit Headers
+
+The application logs UniFi Protect's rate limit headers so you can monitor usage:
+
+```
+RateLimit-Policy: "10-in-1sec"; q=10; w=1
+RateLimit: "10-in-1sec"; r=6; t=1    # 6 requests remaining this second
 ```
 
 ## Docker Volume Structure
@@ -347,23 +453,24 @@ FETCH_INTERVALS: '[10, 60]'         # 10s, 1min
 
 # Low frequency for overview
 FETCH_INTERVALS: '[300, 3600]'      # 5min, 1hour
-
-# Optimized for reuse
-FETCH_INTERVALS: '[60, 180, 900]'   # Perfect mathematical alignment
 ```
 
-### Performance Tuning
-
-For systems with fast storage (SSD/NVMe):
+### Large Deployment Settings
+For deployments with 20+ cameras:
 ```yaml
-FETCH_IMAGE_REUSE_DELAY: "1.0"     # Faster reuse detection
-FETCH_CONCURRENT_LIMIT: "10"       # More concurrent requests
-```
+# Rate limiting
+UNIFI_PROTECT_RATE_LIMIT: "10"
+RATE_LIMIT_SAFETY_BUFFER: "0.7"           # More conservative buffer
 
-For systems with slower storage (network drives):
-```yaml
-FETCH_IMAGE_REUSE_DELAY: "3.0"     # More time for file writes
-FETCH_CONCURRENT_LIMIT: "3"        # Fewer concurrent requests
+# Camera distribution
+FETCH_ENABLE_CAMERA_DISTRIBUTION: "true"   # Always enable
+FETCH_DISTRIBUTION_STRATEGY: "adaptive"    # Auto-calculate timing
+FETCH_DISTRIBUTION_WINDOW_SECONDS: "120"   # Spread across 2 minutes
+FETCH_MAX_OFFSET_SECONDS: "30"            # Allow longer spacing
+
+# Concurrent limits
+FETCH_CONCURRENT_LIMIT_MODE: "manual"      # Manual control
+FETCH_CONCURRENT_LIMIT_MANUAL: "3"         # Conservative limit
 ```
 
 ### Multiple Site Deployment
@@ -404,7 +511,7 @@ The application provides detailed summaries at configurable intervals showing:
 - Per-camera performance statistics
 - Number of connected vs disconnected cameras
 - Image quality information (HD vs Standard)
-- Image reuse statistics
+- Rate limit compliance status
 
 Example summary:
 ```
@@ -412,9 +519,9 @@ Fetch Summary (last 60.0 minutes):
   60s: 358/360 successful (99.4%), last: 09:59:50
     Front_Door_Cam: 358/360 (99.4%)
     Garage_Cam: 360/360 (100.0%)
-  180s: 120/120 successful (100.0%), 80 reused, last: 09:57:00
-    Front_Door_Cam: 120/120 (100.0%)
-    Garage_Cam: 120/120 (100.0%)
+  180s: 120/120 successful (100.0%), last: 09:57:00
+
+Rate limit analysis: limit=10 req/sec, effective=8 req/sec, max_intervals=2, concurrent_limit=4
 ```
 
 ### Camera Status Information
@@ -425,6 +532,9 @@ Available cameras: "Front Door Cam", "Garage Cam", "Backyard Cam"
   ✓ Front Door Cam (CONNECTED) - G4-Doorbell [HD]
   ✓ Garage Cam (CONNECTED) - G4-Pro [HD]  
   ✗ Backyard Cam (DISCONNECTED) - G3-Instant [SD]
+
+Camera distribution ENABLED: 3 cameras, strategy: adaptive, offset: 15s
+Rate limit analysis: limit=10 req/sec, effective=8 req/sec, max_intervals=2, concurrent_limit=4
 ```
 
 Legend:
@@ -432,17 +542,6 @@ Legend:
 - `✗` = Disconnected camera  
 - `[HD]` = Supports high-quality snapshots
 - `[SD]` = Standard quality only
-
-### Image Reuse Status
-
-When intervals are properly aligned, you'll see optimization messages:
-```
-Interval optimization: 180s will reuse images from 60s when aligned
-180s: ✅ Will be able to reuse images from 60s interval
-180s: Attempting to reuse images from 60s interval at timestamp 1750016340
-180s: Successfully reused 7 images from 60s interval
-180s: Reused 7 images from smaller intervals
-```
 
 ## Troubleshooting
 
@@ -458,6 +557,24 @@ Interval optimization: 180s will reuse images from 60s when aligned
 - Generate a new API key
 - Make sure the API key has the necessary permissions
 
+### Rate Limit Issues
+
+**System validation fails with rate limit warnings:**
+```
+⚠️  Rate limit risk: 20 req/sec > 10 req/sec
+   Consider enabling camera distribution or reducing camera count
+```
+
+Solutions:
+- Enable camera distribution: `FETCH_ENABLE_CAMERA_DISTRIBUTION: "true"`
+- Increase distribution window: `FETCH_DISTRIBUTION_WINDOW_SECONDS: "120"`
+- Use manual concurrent limits: `FETCH_CONCURRENT_LIMIT_MODE: "manual"`
+
+**Getting 429 "Too Many Requests" errors:**
+- Check rate limit headers in logs
+- Reduce concurrent limit: `FETCH_CONCURRENT_LIMIT_MANUAL: "3"`
+- Increase safety buffer: `RATE_LIMIT_SAFETY_BUFFER: "0.6"`
+
 ### Camera Issues
 
 **Cameras not being captured:**
@@ -469,18 +586,6 @@ Interval optimization: 180s will reuse images from 60s when aligned
 - This usually means the camera doesn't support high-quality snapshots
 - The application will automatically detect this and use standard quality
 - Check logs for `[HD]` vs `[SD]` indicators
-
-### Image Reuse Issues
-
-**Images not being reused despite aligned intervals:**
-- Check that `FETCH_IMAGE_REUSE_DELAY` allows enough time for file writes
-- Verify intervals are mathematically aligned (larger ÷ smaller = whole number)
-- Look for alignment verification messages in logs
-
-**Reuse failing with file not found errors:**
-- Increase `FETCH_IMAGE_REUSE_DELAY` for slower storage systems
-- Check filesystem permissions and available disk space
-- Verify both interval directories exist and are writable
 
 ### Video Creation Issues
 
@@ -499,19 +604,13 @@ Interval optimization: 180s will reuse images from 60s when aligned
 
 **High API load:**
 - Increase `CAMERA_REFRESH_INTERVAL` to check for cameras less frequently
-- Reduce `FETCH_CONCURRENT_LIMIT` to limit simultaneous requests
+- Enable camera distribution to spread requests over time
 - Use longer capture intervals
-- Ensure intervals are properly aligned for image reuse
 
 **Slow video creation:**
 - Increase `FFMPEG_CONCURRENT_CREATION` for more parallel jobs
 - Use faster presets like "fast" or "veryfast"
 - Consider using a higher CRF value for faster encoding
-
-**Storage performance:**
-- For fast storage: Reduce `FETCH_IMAGE_REUSE_DELAY` to 1.0s
-- For slow storage: Increase `FETCH_IMAGE_REUSE_DELAY` to 3.0s or higher
-- Monitor disk I/O during operation
 
 ### Network Issues
 
@@ -547,7 +646,16 @@ If you're migrating from the older RTSP-based version:
    UNIFI_PROTECT_BASE_URL: "https://unifi.local/proxy/protect/integration/v1"
    ```
 
-2. **Simplify camera configuration:**
+2. **Add rate limiting configuration:**
+   ```yaml
+   # New rate limiting features
+   UNIFI_PROTECT_RATE_LIMIT: "10"
+   RATE_LIMIT_SAFETY_BUFFER: "0.8"
+   FETCH_CONCURRENT_LIMIT_MODE: "auto"
+   FETCH_ENABLE_CAMERA_DISTRIBUTION: "auto"
+   ```
+
+3. **Simplify camera configuration:**
    ```yaml
    # Old complex camera config (remove this)
    # UNIFI_PROTECT_TIME_LAPSE_CAMERAS_CONFIG: '[{"name":"cam-front","stream_id":"abc123","intervals":[60]}]'
@@ -558,19 +666,20 @@ If you're migrating from the older RTSP-based version:
    FETCH_INTERVALS: '[60]'
    ```
 
-3. **Update environment variable names:**
+4. **Update environment variable names:**
    - Most variables have been simplified (remove `UNIFI_PROTECT_TIME_LAPSE_` prefix)
    - Check the environmental variables table above for current names
 
 ### Benefits of Migration
 
 - **99% more reliable** - no more RTSP connection issues
+- **Rate limit compliance** - automatically respects API limits
 - **Simpler configuration** - no manual stream ID management
 - **Better performance** - direct API calls instead of video stream processing  
 - **Automatic discovery** - finds cameras automatically
 - **Smart quality** - uses best quality each camera supports
 - **Better error handling** - comprehensive retry and recovery logic
-- **Image reuse optimization** - significant reduction in API calls and camera load
+- **System validation** - warns about configuration issues before they cause problems
 
 ## Support and Resources
 
