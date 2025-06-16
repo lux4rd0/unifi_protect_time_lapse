@@ -21,6 +21,9 @@ def setup_logging():
         datefmt="%Y-%m-%d %H:%M:%S",
     )
 
+    # Reduce httpx verbosity - keep only WARNING and ERROR logs
+    logging.getLogger("httpx").setLevel(logging.WARNING)
+
 
 def print_banner():
     """Print application banner with version information."""
@@ -82,7 +85,26 @@ def print_configuration():
     logging.info(f"Camera Refresh Interval: {config.CAMERA_REFRESH_INTERVAL}s")
     logging.info(f"High Quality Snapshots: {config.SNAPSHOT_HIGH_QUALITY}")
 
+    # Rate limiting settings
+    logging.info("=" * 50)
+    logging.info("RATE LIMITING")
+    logging.info("=" * 50)
+    logging.info(f"UniFi Protect Rate Limit: {config.UNIFI_PROTECT_RATE_LIMIT} req/sec")
+    logging.info(f"Safety Buffer: {int(config.RATE_LIMIT_SAFETY_BUFFER * 100)}%")
+    logging.info(f"Effective Rate Limit: {config.EFFECTIVE_RATE_LIMIT} req/sec")
+
+    # Concurrent limit settings
+    if config.FETCH_CONCURRENT_LIMIT_MODE == "auto":
+        logging.info("Concurrent Limit: Auto-calculated based on rate limits")
+    else:
+        logging.info(
+            f"Concurrent Limit: Manual ({config.FETCH_CONCURRENT_LIMIT_MANUAL})"
+        )
+
     # Camera settings
+    logging.info("=" * 50)
+    logging.info("CAMERA SETTINGS")
+    logging.info("=" * 50)
     logging.info(f"Camera Selection: {config.CAMERA_SELECTION_MODE}")
     if config.CAMERA_SELECTION_MODE == "whitelist" and config.CAMERA_WHITELIST:
         logging.info(f"Whitelisted Cameras: {', '.join(config.CAMERA_WHITELIST)}")
@@ -90,16 +112,46 @@ def print_configuration():
         logging.info(f"Blacklisted Cameras: {', '.join(config.CAMERA_BLACKLIST)}")
 
     # Fetch settings
+    logging.info("=" * 50)
+    logging.info("FETCH SETTINGS")
+    logging.info("=" * 50)
     logging.info(
         f"Fetch Intervals: {', '.join(f'{i}s' for i in config.FETCH_INTERVALS)}"
     )
     logging.info(f"Fetch Enabled: {config.FETCH_ENABLED}")
     logging.info(f"Top of Minute Alignment: {config.FETCH_TOP_OF_THE_MINUTE}")
-    logging.info(f"Max Concurrent Fetches: {config.FETCH_CONCURRENT_LIMIT}")
     logging.info(f"Max Retries: {config.FETCH_MAX_RETRIES}")
-    logging.info(f"Image Reuse Delay: {config.FETCH_IMAGE_REUSE_DELAY}s")
+
+    # Camera distribution settings
+    logging.info("=" * 50)
+    logging.info("CAMERA DISTRIBUTION")
+    logging.info("=" * 50)
+    logging.info(f"Distribution Mode: {config.FETCH_ENABLE_CAMERA_DISTRIBUTION}")
+    logging.info(f"Distribution Strategy: {config.FETCH_DISTRIBUTION_STRATEGY}")
+
+    if config.FETCH_ENABLE_CAMERA_DISTRIBUTION != "false":
+        if config.FETCH_ENABLE_CAMERA_DISTRIBUTION == "auto":
+            logging.info(
+                f"Auto Threshold: ≥{config.FETCH_DISTRIBUTION_MIN_CAMERAS} cameras"
+            )
+
+        # Distribution parameters
+        if config.FETCH_DISTRIBUTION_STRATEGY == "adaptive":
+            logging.info(
+                f"Adaptive Range: {config.FETCH_MIN_OFFSET_SECONDS}s - {config.FETCH_MAX_OFFSET_SECONDS}s"
+            )
+            logging.info(
+                f"Distribution Window: {config.FETCH_DISTRIBUTION_WINDOW_SECONDS}s"
+            )
+        else:
+            logging.info(f"Fixed Offset: {config.FETCH_CAMERA_OFFSET_SECONDS}s")
+
+        logging.info(f"Log Slot Utilization: {config.FETCH_LOG_SLOT_UTILIZATION}")
 
     # Time-lapse settings
+    logging.info("=" * 50)
+    logging.info("TIME-LAPSE SETTINGS")
+    logging.info("=" * 50)
     logging.info(f"Time-lapse Creation Enabled: {config.TIMELAPSE_CREATION_ENABLED}")
     logging.info(f"Creation Time: {config.TIMELAPSE_CREATION_TIME}")
     logging.info(f"Days Ago: {config.TIMELAPSE_DAYS_AGO}")
@@ -111,10 +163,16 @@ def print_configuration():
     logging.info(f"Concurrent Video Creation: {config.FFMPEG_CONCURRENT_CREATION}")
 
     # Paths
+    logging.info("=" * 50)
+    logging.info("PATHS")
+    logging.info("=" * 50)
     logging.info(f"Image Output: {config.IMAGE_OUTPUT_PATH}")
     logging.info(f"Video Output: {config.VIDEO_OUTPUT_PATH}")
 
     # Logging
+    logging.info("=" * 50)
+    logging.info("LOGGING")
+    logging.info("=" * 50)
     logging.info(f"Log Level: {config.LOGGING_LEVEL}")
     logging.info(f"Summary Reports: {config.SUMMARY_ENABLED}")
     if config.SUMMARY_ENABLED:
@@ -123,6 +181,58 @@ def print_configuration():
         )
 
     logging.info("=" * 80)
+
+
+async def validate_system_capacity():
+    """Validate that the system can handle the current configuration."""
+    from camera_manager import CameraManager
+
+    logging.info("Validating system capacity...")
+
+    try:
+        async with CameraManager() as camera_manager:
+            # Get camera count
+            cameras = await camera_manager.get_cameras(force_refresh=True)
+            camera_count = len([cam for cam in cameras if cam.is_connected])
+
+            if camera_count == 0:
+                logging.warning(
+                    "No connected cameras found - capacity validation skipped"
+                )
+                return True
+
+            logging.info(f"Connected cameras: {camera_count}")
+
+            # Calculate rate limit requirements
+            max_simultaneous_intervals = config.calculate_max_simultaneous_intervals()
+            effective_concurrent_limit = config.calculate_effective_concurrent_limit()
+
+            logging.info(f"Max simultaneous intervals: {max_simultaneous_intervals}")
+            logging.info(f"Effective concurrent limit: {effective_concurrent_limit}")
+
+            # Validate rate limit compliance
+            compliance = config.validate_rate_limit_compliance(camera_count)
+
+            if not compliance:
+                logging.error("❌ System configuration may exceed rate limits!")
+                logging.error("Consider:")
+                logging.error(
+                    "  1. Enabling camera distribution (FETCH_ENABLE_CAMERA_DISTRIBUTION=auto)"
+                )
+                logging.error(
+                    "  2. Reducing concurrent limit (FETCH_CONCURRENT_LIMIT_MODE=manual)"
+                )
+                logging.error(
+                    "  3. Increasing distribution window (FETCH_DISTRIBUTION_WINDOW_SECONDS)"
+                )
+                return False
+            else:
+                logging.info("✅ System capacity validation passed")
+                return True
+
+    except Exception as e:
+        logging.error(f"Error during capacity validation: {e}")
+        return False
 
 
 async def signal_handler(sig, loop):
@@ -217,19 +327,36 @@ async def test_cameras():
 
             # Test each camera
             timestamp = int(datetime.now().timestamp())
-            results = await camera_manager.capture_all_cameras(timestamp, 60)
+
+            # Use rate-limit aware capture method
+            use_distribution = config.should_use_camera_distribution(len(cameras))
+            if use_distribution:
+                results = await camera_manager.capture_cameras_distributed(
+                    timestamp, 60
+                )
+                method = "distributed"
+            else:
+                results = await camera_manager.capture_all_cameras(timestamp, 60)
+                method = "concurrent"
 
             # Report results
             successful = sum(1 for success in results.values() if success)
             total = len(results)
 
             logging.info(
-                f"Camera test completed: {successful}/{total} cameras accessible"
+                f"Camera test completed ({method}): {successful}/{total} cameras accessible"
             )
 
             for camera_name, success in results.items():
                 status = "✓" if success else "✗"
                 logging.info(f"  {status} {camera_name}")
+
+            # Report rate limit info
+            max_simultaneous = config.calculate_max_simultaneous_intervals()
+            concurrent_limit = config.calculate_effective_concurrent_limit()
+            logging.info(
+                f"Rate limit info: {concurrent_limit} concurrent, {max_simultaneous} max intervals"
+            )
 
         except Exception as e:
             logging.error(f"Error testing cameras: {e}")
@@ -256,6 +383,12 @@ async def main():
         elif command in ["fetch", "capture"]:
             print_banner()
             print_configuration()
+
+            # Validate system capacity before starting
+            if not await validate_system_capacity():
+                logging.error("System validation failed - aborting")
+                sys.exit(1)
+
             logging.info("Starting fetch service only...")
             await run_fetch_only()
             return
@@ -265,6 +398,16 @@ async def main():
             logging.info("Starting time-lapse service only...")
             await run_timelapse_only()
             return
+        elif command == "validate":
+            print_banner()
+            logging.info("Running system capacity validation...")
+            success = await validate_system_capacity()
+            if success:
+                logging.info("✅ System validation passed")
+            else:
+                logging.error("❌ System validation failed")
+                sys.exit(1)
+            return
         elif command in ["help", "-h", "--help"]:
             logging.info("UniFi Protect Time-lapse Application")
             logging.info("")
@@ -273,6 +416,7 @@ async def main():
             logging.info("Commands:")
             logging.info("  (no args)  - Run both fetch and time-lapse services")
             logging.info("  test       - Test camera connectivity and exit")
+            logging.info("  validate   - Validate system capacity and exit")
             logging.info("  create     - Create time-lapse videos now and exit")
             logging.info("  fetch      - Run only the image fetch service")
             logging.info("  timelapse  - Run only the time-lapse creation service")
@@ -294,6 +438,11 @@ async def main():
     # Print banner and configuration
     print_banner()
     print_configuration()
+
+    # Validate system capacity
+    if not await validate_system_capacity():
+        logging.error("System validation failed - aborting startup")
+        sys.exit(1)
 
     # Ensure output directories exist
     config.ensure_directories()

@@ -3,6 +3,7 @@
 import os
 import json
 import logging
+import math
 from typing import Dict, List, Optional, Any
 from pathlib import Path
 
@@ -40,6 +41,21 @@ SNAPSHOT_HIGH_QUALITY = os.getenv("SNAPSHOT_HIGH_QUALITY", "True").lower() in [
     "y",
     "yes",
 ]
+
+# =============================================================================
+# UNIFI PROTECT RATE LIMITING
+# =============================================================================
+
+# UniFi Protect's actual rate limit (requests per second)
+UNIFI_PROTECT_RATE_LIMIT = int(os.getenv("UNIFI_PROTECT_RATE_LIMIT", "10"))
+
+# Safety buffer - use only this percentage of the rate limit
+RATE_LIMIT_SAFETY_BUFFER = float(os.getenv("RATE_LIMIT_SAFETY_BUFFER", "0.8"))  # 80%
+
+# Effective rate limit we'll design around
+EFFECTIVE_RATE_LIMIT = int(
+    UNIFI_PROTECT_RATE_LIMIT * RATE_LIMIT_SAFETY_BUFFER
+)  # 8 req/sec
 
 # =============================================================================
 # CAMERA CONFIGURATION
@@ -110,11 +126,52 @@ FETCH_MAX_RETRIES = int(os.getenv("FETCH_MAX_RETRIES", "3"))
 # Delay between retry attempts in seconds
 FETCH_RETRY_DELAY = int(os.getenv("FETCH_RETRY_DELAY", "2"))
 
-# Concurrent fetch limit
-FETCH_CONCURRENT_LIMIT = int(os.getenv("FETCH_CONCURRENT_LIMIT", "5"))
+# Auto-calculate concurrent limit based on rate limits ("auto") or set manual limit (number)
+FETCH_CONCURRENT_LIMIT_MODE = os.getenv("FETCH_CONCURRENT_LIMIT_MODE", "auto").lower()
+FETCH_CONCURRENT_LIMIT_MANUAL = int(os.getenv("FETCH_CONCURRENT_LIMIT_MANUAL", "5"))
 
-# Delay to wait for source images to be written before attempting reuse (in seconds)
-FETCH_IMAGE_REUSE_DELAY = float(os.getenv("FETCH_IMAGE_REUSE_DELAY", "5.0"))
+# =============================================================================
+# CAMERA DISTRIBUTION SETTINGS (Rate-Limit Aware)
+# =============================================================================
+
+# Enable camera distribution to avoid rate limits
+# "auto" = smart detection based on rate limits and camera count
+# "true" = always enable distribution
+# "false" = always disable distribution
+FETCH_ENABLE_CAMERA_DISTRIBUTION = os.getenv(
+    "FETCH_ENABLE_CAMERA_DISTRIBUTION", "auto"
+).lower()
+
+# Distribution strategy
+# "adaptive" = calculate optimal spacing based on camera count and rate limits
+# "fixed" = always use FETCH_CAMERA_OFFSET_SECONDS
+FETCH_DISTRIBUTION_STRATEGY = os.getenv(
+    "FETCH_DISTRIBUTION_STRATEGY", "adaptive"
+).lower()
+
+# Thresholds for auto mode decision making
+FETCH_DISTRIBUTION_MIN_CAMERAS = int(os.getenv("FETCH_DISTRIBUTION_MIN_CAMERAS", "4"))
+
+# Distribution calculation parameters
+FETCH_DISTRIBUTION_WINDOW_SECONDS = int(
+    os.getenv("FETCH_DISTRIBUTION_WINDOW_SECONDS", "60")
+)
+FETCH_MIN_OFFSET_SECONDS = int(os.getenv("FETCH_MIN_OFFSET_SECONDS", "1"))
+FETCH_MAX_OFFSET_SECONDS = int(os.getenv("FETCH_MAX_OFFSET_SECONDS", "15"))
+
+# Fixed offset (used when strategy = "fixed")
+FETCH_CAMERA_OFFSET_SECONDS = int(os.getenv("FETCH_CAMERA_OFFSET_SECONDS", "5"))
+
+# Monitoring and diagnostics
+FETCH_LOG_SLOT_UTILIZATION = os.getenv(
+    "FETCH_LOG_SLOT_UTILIZATION", "True"
+).lower() in [
+    "true",
+    "1",
+    "t",
+    "y",
+    "yes",
+]
 
 # =============================================================================
 # LOGGING CONFIGURATION
@@ -200,6 +257,146 @@ TIMELAPSE_DAYS_AGO = int(os.getenv("TIMELAPSE_DAYS_AGO", "1"))
 MAX_SLEEP_INTERVAL = int(os.getenv("MAX_SLEEP_INTERVAL", "3600"))
 
 # =============================================================================
+# RATE-LIMIT AWARE FUNCTIONS
+# =============================================================================
+
+
+def calculate_max_simultaneous_intervals() -> int:
+    """Calculate the maximum number of intervals that can execute simultaneously."""
+    if len(FETCH_INTERVALS) <= 1:
+        return 1
+
+    # Check alignment over one full cycle (LCM of all intervals)
+    def gcd(a, b):
+        while b:
+            a, b = b, a % b
+        return a
+
+    def lcm(a, b):
+        return abs(a * b) // gcd(a, b)
+
+    def lcm_multiple(numbers):
+        result = numbers[0]
+        for i in range(1, len(numbers)):
+            result = lcm(result, numbers[i])
+        return result
+
+    cycle_length = min(3600, lcm_multiple(FETCH_INTERVALS))  # Cap at 1 hour
+
+    max_simultaneous = 1
+    for timestamp in range(0, cycle_length, 60):  # Check every minute
+        simultaneous = len([i for i in FETCH_INTERVALS if timestamp % i == 0])
+        max_simultaneous = max(max_simultaneous, simultaneous)
+
+    return max_simultaneous
+
+
+def calculate_effective_concurrent_limit() -> int:
+    """Calculate effective concurrent limit based on rate limits."""
+    if FETCH_CONCURRENT_LIMIT_MODE == "manual":
+        return FETCH_CONCURRENT_LIMIT_MANUAL
+
+    # Auto-calculate based on rate limits
+    max_simultaneous_intervals = calculate_max_simultaneous_intervals()
+    effective_limit = EFFECTIVE_RATE_LIMIT // max_simultaneous_intervals
+
+    # Ensure at least 1 camera can capture
+    return max(1, effective_limit)
+
+
+def should_use_camera_distribution(camera_count: int) -> bool:
+    """
+    Determine if camera distribution should be used based on rate limits and camera count.
+    """
+    if FETCH_ENABLE_CAMERA_DISTRIBUTION == "true":
+        return True
+    elif FETCH_ENABLE_CAMERA_DISTRIBUTION == "false":
+        return False
+    else:  # "auto"
+        effective_concurrent_limit = calculate_effective_concurrent_limit()
+
+        # Small deployments - no distribution needed if under rate limits
+        if camera_count <= FETCH_DISTRIBUTION_MIN_CAMERAS:
+            return False
+
+        # Check if we would exceed rate limits without distribution
+        max_simultaneous_intervals = calculate_max_simultaneous_intervals()
+        peak_requests_without_distribution = camera_count * max_simultaneous_intervals
+
+        if peak_requests_without_distribution > UNIFI_PROTECT_RATE_LIMIT:
+            return True
+
+        # Check if we exceed effective concurrent limit
+        return camera_count > effective_concurrent_limit
+
+
+def calculate_optimal_offset_seconds(camera_count: int) -> int:
+    """
+    Calculate optimal offset timing based on camera count and rate limits.
+    """
+    if FETCH_DISTRIBUTION_STRATEGY == "fixed":
+        return FETCH_CAMERA_OFFSET_SECONDS
+
+    # Calculate max cameras per slot considering interval alignment
+    max_simultaneous_intervals = calculate_max_simultaneous_intervals()
+    max_cameras_per_slot = EFFECTIVE_RATE_LIMIT // max_simultaneous_intervals
+
+    if camera_count <= max_cameras_per_slot:
+        return 0  # No distribution needed
+
+    # Calculate how many time slots we need
+    slots_needed = math.ceil(camera_count / max_cameras_per_slot)
+
+    # Calculate spacing to fit within the configured window
+    calculated_offset = FETCH_DISTRIBUTION_WINDOW_SECONDS // slots_needed
+
+    # Apply configured min/max bounds
+    optimal_offset = max(
+        FETCH_MIN_OFFSET_SECONDS, min(calculated_offset, FETCH_MAX_OFFSET_SECONDS)
+    )
+
+    return optimal_offset
+
+
+def validate_rate_limit_compliance(camera_count: int) -> bool:
+    """
+    Validate that current configuration won't exceed rate limits.
+    """
+    max_simultaneous_intervals = calculate_max_simultaneous_intervals()
+
+    if not should_use_camera_distribution(camera_count):
+        # No distribution - all cameras capture simultaneously
+        peak_requests = camera_count * max_simultaneous_intervals
+
+        if peak_requests > UNIFI_PROTECT_RATE_LIMIT:
+            logging.warning(
+                f"⚠️  Rate limit risk: {peak_requests} req/sec > {UNIFI_PROTECT_RATE_LIMIT} req/sec"
+            )
+            logging.warning(
+                "   Consider enabling camera distribution or reducing camera count"
+            )
+            return False
+    else:
+        # With distribution - check if our slots respect rate limits
+        optimal_offset = calculate_optimal_offset_seconds(camera_count)
+        max_cameras_per_slot = EFFECTIVE_RATE_LIMIT // max_simultaneous_intervals
+
+        slots_needed = math.ceil(camera_count / max_cameras_per_slot)
+        actual_cameras_per_slot = math.ceil(camera_count / slots_needed)
+        peak_requests = actual_cameras_per_slot * max_simultaneous_intervals
+
+        if peak_requests > UNIFI_PROTECT_RATE_LIMIT:
+            logging.warning(
+                f"⚠️  Rate limit risk with distribution: {peak_requests} req/sec > {UNIFI_PROTECT_RATE_LIMIT} req/sec"
+            )
+            logging.warning("   Consider increasing FETCH_DISTRIBUTION_WINDOW_SECONDS")
+            return False
+
+    logging.info("✅ Rate limit compliance: Configuration should stay within limits")
+    return True
+
+
+# =============================================================================
 # VALIDATION AND COMPUTED VALUES
 # =============================================================================
 
@@ -225,8 +422,19 @@ def validate_config():
     if any(interval <= 0 for interval in FETCH_INTERVALS):
         errors.append("All FETCH_INTERVALS must be positive integers")
 
-    if FETCH_IMAGE_REUSE_DELAY < 0:
-        errors.append("FETCH_IMAGE_REUSE_DELAY must be a positive number")
+    if FETCH_ENABLE_CAMERA_DISTRIBUTION not in ["auto", "true", "false"]:
+        errors.append(
+            "FETCH_ENABLE_CAMERA_DISTRIBUTION must be 'auto', 'true', or 'false'"
+        )
+
+    if FETCH_DISTRIBUTION_STRATEGY not in ["adaptive", "fixed"]:
+        errors.append("FETCH_DISTRIBUTION_STRATEGY must be 'adaptive' or 'fixed'")
+
+    if UNIFI_PROTECT_RATE_LIMIT <= 0:
+        errors.append("UNIFI_PROTECT_RATE_LIMIT must be positive")
+
+    if not 0 < RATE_LIMIT_SAFETY_BUFFER <= 1:
+        errors.append("RATE_LIMIT_SAFETY_BUFFER must be between 0 and 1")
 
     try:
         from datetime import datetime
@@ -236,6 +444,55 @@ def validate_config():
         errors.append("TIMELAPSE_CREATION_TIME must be in HH:MM format")
 
     return errors
+
+
+def find_common_aligned_timestamp() -> int:
+    """
+    Find the optimal start timestamp for all intervals.
+
+    If FETCH_TOP_OF_THE_MINUTE is True: ALL intervals start at next minute boundary.
+    If False: Use LCM for perfect alignment (may wait longer).
+
+    Returns:
+        Unix timestamp where intervals should start
+    """
+    from datetime import datetime
+    import math
+
+    now = datetime.now()
+    current_timestamp = int(now.timestamp())
+
+    if FETCH_TOP_OF_THE_MINUTE:
+        # ALL intervals start at the same time - next minute boundary
+        next_minute = ((current_timestamp // 60) + 1) * 60
+
+        wait_seconds = next_minute - current_timestamp
+        logging.info(f"Common start timestamp: {next_minute} (wait {wait_seconds}s)")
+
+        return next_minute
+    else:
+        # Use LCM for perfect alignment (may wait longer)
+        def gcd(a, b):
+            while b:
+                a, b = b, a % b
+            return a
+
+        def lcm(a, b):
+            return abs(a * b) // gcd(a, b)
+
+        def lcm_multiple(numbers):
+            result = numbers[0]
+            for i in range(1, len(numbers)):
+                result = lcm(result, numbers[i])
+            return result
+
+        alignment_period = lcm_multiple(FETCH_INTERVALS)
+        next_aligned = ((current_timestamp // alignment_period) + 1) * alignment_period
+
+        wait_seconds = next_aligned - current_timestamp
+        logging.info(f"LCM alignment: {next_aligned} (wait {wait_seconds}s)")
+
+        return next_aligned
 
 
 # Get request headers for JSON responses
