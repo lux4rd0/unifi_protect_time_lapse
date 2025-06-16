@@ -152,6 +152,8 @@ services:
 3. Replace `your-protect-host` with your UniFi Protect hostname/IP
 4. Run `docker compose up -d`
 
+**Note**: The first startup may take a few minutes as Docker downloads the image and initializes the system. Subsequent starts are much faster thanks to optimized caching.
+
 ## Environmental Variables
 
 ### Core API Configuration
@@ -642,6 +644,11 @@ Solutions:
 
 ### Performance Issues
 
+**Slow container startup:**
+- First startup is normal (downloading image layers)
+- Subsequent starts should be much faster
+- Check available disk space for Docker images
+
 **High API load:**
 - Increase `CAMERA_REFRESH_INTERVAL` to check for cameras less frequently
 - Enable camera distribution to spread requests over time
@@ -714,6 +721,7 @@ If you're migrating from the older RTSP-based version:
 
 - **99% more reliable** - no more RTSP connection issues
 - **Rate limit compliance** - automatically respects API limits
+- **Optimized Docker builds** - faster subsequent builds with layer caching
 - **Simpler configuration** - no manual stream ID management
 - **Better performance** - direct API calls instead of video stream processing  
 - **Automatic discovery** - finds cameras automatically
