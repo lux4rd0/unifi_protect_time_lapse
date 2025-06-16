@@ -49,7 +49,7 @@ UniFi Protect Time-lapse connects to your UniFi Protect system via its REST API 
 
 ### Deployment
 
-1. Create a `compose.yaml` file:
+1. Create a `docker-compose.yml` file:
 
 ```yaml
 name: unifi_protect_time_lapse
@@ -291,6 +291,28 @@ FETCH_ENABLE_CAMERA_DISTRIBUTION: "true"   # Always enable distribution
 FETCH_DISTRIBUTION_STRATEGY: "adaptive"    # Calculate optimal timing
 ```
 *Result: Cameras distributed across multiple time slots to respect rate limits*
+
+### Handling Disconnected Cameras
+
+**Important**: Distribution settings are locked at startup based on **all discovered cameras** (including disconnected ones). This ensures consistent timing if cameras reconnect, but you have options:
+
+**Option 1: Optimize for current cameras (recommended for permanently offline cameras)**
+```yaml
+# Remove disconnected cameras from whitelist - system optimizes for remaining cameras
+CAMERA_WHITELIST: '["Garage Cam", "Pergola North Cam", "Front Door Cam"]'  # Only connected cameras
+```
+
+**Option 2: Reserve slots for reconnecting cameras (recommended for temporarily offline cameras)**
+```yaml  
+# Keep disconnected cameras in whitelist - system reserves their timing slots
+CAMERA_WHITELIST: '["Garage Cam", "Offline Cam", "Pergola North Cam", "Front Door Cam"]'  # All cameras
+```
+
+**Option 3: Override concurrent limits to disable distribution**
+```yaml
+FETCH_CONCURRENT_LIMIT_MODE: "manual"      # Manual override
+FETCH_CONCURRENT_LIMIT_MANUAL: "10"        # High enough to capture all cameras simultaneously
+```
 
 **Custom rate limiting:**
 ```yaml
