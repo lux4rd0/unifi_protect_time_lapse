@@ -49,7 +49,7 @@ UniFi Protect Time-lapse connects to your UniFi Protect system via its REST API 
 
 ### Deployment
 
-1. Create a `docker-compose.yml` file:
+1. Create a `compose.yaml` file:
 
 ```yaml
 name: unifi_protect_time_lapse
