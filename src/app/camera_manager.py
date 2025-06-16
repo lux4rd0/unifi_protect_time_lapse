@@ -95,6 +95,12 @@ class CameraManager:
         self.last_camera_refresh = None
         self.camera_refresh_interval = config.CAMERA_REFRESH_INTERVAL
 
+        # Distribution settings locked at startup - NEVER change during runtime
+        self._distribution_locked = False
+        self._locked_total_cameras = 0
+        self._locked_use_distribution = False
+        self._locked_optimal_offset = 0
+
     async def __aenter__(self):
         """Async context manager entry."""
         limits = httpx.Limits(max_keepalive_connections=20, max_connections=100)
@@ -176,22 +182,40 @@ class CameraManager:
                         f"  {status} {camera.name} ({camera.state}) - {camera.type} [{hd_support}]"
                     )
 
-                # Log camera distribution information if enabled
-                use_distribution = config.should_use_camera_distribution(
-                    len(filtered_cameras)
-                )
-                if use_distribution:
-                    optimal_offset = config.calculate_optimal_offset_seconds(
-                        len(filtered_cameras)
+                # LOCK distribution settings on first discovery - NEVER change during runtime
+                if not self._distribution_locked:
+                    self._locked_total_cameras = len(filtered_cameras)
+                    self._locked_use_distribution = (
+                        config.should_use_camera_distribution(len(filtered_cameras))
                     )
+                    self._locked_optimal_offset = (
+                        config.calculate_optimal_offset_seconds(len(filtered_cameras))
+                    )
+                    self._distribution_locked = True
 
                     logging.info(
-                        f"Camera distribution ENABLED: {len(filtered_cameras)} cameras, "
+                        "🔒 LOCKING distribution settings based on discovered cameras:"
+                    )
+                    logging.info(
+                        f"   Total cameras: {self._locked_total_cameras} (including disconnected)"
+                    )
+                    logging.info(
+                        f"   Distribution enabled: {self._locked_use_distribution}"
+                    )
+                    if self._locked_use_distribution:
+                        logging.info(
+                            f"   Locked offset: {self._locked_optimal_offset}s"
+                        )
+
+                # Log camera distribution information using LOCKED settings
+                if self._locked_use_distribution:
+                    logging.info(
+                        f"Camera distribution ENABLED: {self._locked_total_cameras} cameras, "
                         f"strategy: {config.FETCH_DISTRIBUTION_STRATEGY}, "
-                        f"offset: {optimal_offset}s"
+                        f"offset: {self._locked_optimal_offset}s (LOCKED)"
                     )
 
-                    # Log rate limit analysis
+                    # Log rate limit analysis using locked settings
                     max_simultaneous_intervals = (
                         config.calculate_max_simultaneous_intervals()
                     )
@@ -204,22 +228,20 @@ class CameraManager:
                         f"limit={config.UNIFI_PROTECT_RATE_LIMIT} req/sec, "
                         f"effective={config.EFFECTIVE_RATE_LIMIT} req/sec, "
                         f"max_intervals={max_simultaneous_intervals}, "
-                        f"concurrent_limit={effective_concurrent_limit}"
+                        f"concurrent_limit={effective_concurrent_limit} (LOCKED)"
                     )
 
                     if config.FETCH_LOG_SLOT_UTILIZATION:
-                        self._log_camera_assignments(filtered_cameras, optimal_offset)
+                        self._log_camera_assignments(
+                            filtered_cameras, self._locked_optimal_offset
+                        )
                 else:
                     logging.info(
-                        f"Camera distribution DISABLED: {len(filtered_cameras)} cameras"
+                        f"Camera distribution DISABLED: {self._locked_total_cameras} cameras (LOCKED)"
                     )
 
-                    # Log why distribution is disabled
-                    if config.FETCH_ENABLE_CAMERA_DISTRIBUTION == "false":
-                        logging.info("  Reason: Explicitly disabled in configuration")
-                    else:
-                        # Check rate limit compliance without distribution
-                        config.validate_rate_limit_compliance(len(filtered_cameras))
+                    # Check rate limit compliance without distribution using locked settings
+                    config.validate_rate_limit_compliance(self._locked_total_cameras)
 
             else:
                 logging.warning("No cameras match the current selection criteria")
@@ -532,8 +554,12 @@ class CameraManager:
             logging.warning("No connected cameras available for capture")
             return {}
 
-        # Calculate optimal offset based on current camera count
-        optimal_offset = config.calculate_optimal_offset_seconds(len(connected_cameras))
+        # Calculate optimal offset based on LOCKED settings
+        optimal_offset = (
+            self._locked_optimal_offset
+            if self._distribution_locked
+            else config.calculate_optimal_offset_seconds(len(connected_cameras))
+        )
 
         # Handle case where optimal offset is 0 (no distribution needed)
         if optimal_offset == 0:
