@@ -254,7 +254,7 @@ The system automatically:
 
 ### Camera Distribution
 
-For larger deployments (4+ cameras), the system automatically distributes camera requests across time:
+For larger deployments (4+ cameras), the system can automatically distribute camera requests across time when needed:
 
 ```
 Example with 12 cameras:
@@ -263,6 +263,8 @@ Example with 12 cameras:
 21:30:10 - Cameras 9-12 capture
 ```
 
+**Important**: Distribution is only enabled when it provides a benefit. With small deployments or when concurrent limits are sufficient, all cameras capture simultaneously for optimal performance.
+
 This ensures you never exceed the 10 req/sec limit while maintaining precise timing.
 
 ### Rate Limit Configuration Examples
@@ -270,8 +272,16 @@ This ensures you never exceed the 10 req/sec limit while maintaining precise tim
 **Small deployment (≤5 cameras):**
 ```yaml
 FETCH_CONCURRENT_LIMIT_MODE: "auto"        # System calculates optimal limits
-FETCH_ENABLE_CAMERA_DISTRIBUTION: "auto"   # Enables distribution if needed
+FETCH_ENABLE_CAMERA_DISTRIBUTION: "auto"   # Only enables if beneficial
 ```
+*Result: All cameras capture simultaneously - no distribution needed*
+
+**Medium deployment (6-15 cameras):**
+```yaml
+FETCH_CONCURRENT_LIMIT_MODE: "auto"        # System calculates optimal limits  
+FETCH_ENABLE_CAMERA_DISTRIBUTION: "auto"   # Enables distribution when helpful
+```
+*Result: Cameras distributed across 2-3 time slots as needed*
 
 **Large deployment (20+ cameras):**
 ```yaml
@@ -280,6 +290,7 @@ RATE_LIMIT_SAFETY_BUFFER: "0.8"           # Use 80% for safety
 FETCH_ENABLE_CAMERA_DISTRIBUTION: "true"   # Always enable distribution
 FETCH_DISTRIBUTION_STRATEGY: "adaptive"    # Calculate optimal timing
 ```
+*Result: Cameras distributed across multiple time slots to respect rate limits*
 
 **Custom rate limiting:**
 ```yaml
@@ -362,6 +373,9 @@ Camera slot assignments (deterministic):
   Slot 0 (+0s): Front Door Cam, Garage Cam, Backyard Cam, Kitchen Cam
   Slot 1 (+8s): Living Room Cam, Bedroom Cam, Office Cam, Basement Cam
   Slot 2 (+16s): Patio Cam, Driveway Cam, Side Yard Cam
+
+# Or for smaller deployments:
+Camera distribution DISABLED: 4 cameras (no distribution needed)
 ```
 
 ### Interval-Specific Logging
@@ -371,6 +385,10 @@ All operations are clearly tagged by interval:
 ```
 [60s] Captured 15/15 connected cameras (distributed across 3 groups, 8s offset)
 [180s] Captured 15/15 connected cameras (distributed across 3 groups, 8s offset)
+
+# Or for smaller deployments:
+[60s] Captured 4/4 connected cameras (no distribution)
+[180s] Captured 4/4 connected cameras (no distribution)
 ```
 
 ### Rate Limit Headers
