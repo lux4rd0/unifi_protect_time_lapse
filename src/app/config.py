@@ -6,6 +6,7 @@ import logging
 import math
 from typing import Dict, List, Optional, Any
 from pathlib import Path
+from datetime import datetime, time
 
 # =============================================================================
 # UNIFI PROTECT API SETTINGS
@@ -15,7 +16,7 @@ UNIFI_PROTECT_API_KEY = os.getenv("UNIFI_PROTECT_API_KEY", "")
 
 UNIFI_PROTECT_BASE_URL = os.getenv(
     "UNIFI_PROTECT_BASE_URL",
-    "https://unifi01.tylephony.com/proxy/protect/integration/v1",
+    "https://https://192.168.2.1/proxy/protect/integration/v1",
 )
 
 # SSL verification setting
@@ -96,6 +97,25 @@ except json.JSONDecodeError as e:
 
 # Sort intervals
 FETCH_INTERVALS = sorted(FETCH_INTERVALS)
+
+FETCH_START_HOUR = os.getenv("FETCH_START_HOUR", "00:00")
+FETCH_END_HOUR = os.getenv("FETCH_END_HOUR", "23:59")
+
+
+def _parse_time(value: str, name: str, fallback: str) -> time:
+    """Parse a HH:MM time string, falling back to a safe default on error."""
+
+    try:
+        return datetime.strptime(value, "%H:%M").time()
+    except ValueError:
+        logging.error(
+            f"{name} must be in HH:MM format. Received '{value}'. Falling back to {fallback}."
+        )
+        return datetime.strptime(fallback, "%H:%M").time()
+
+
+FETCH_START_TIME = _parse_time(FETCH_START_HOUR, "FETCH_START_HOUR", "00:00")
+FETCH_END_TIME = _parse_time(FETCH_END_HOUR, "FETCH_END_HOUR", "23:59")
 
 # =============================================================================
 # PATH CONFIGURATIONS
@@ -437,12 +457,19 @@ def validate_config():
         errors.append("RATE_LIMIT_SAFETY_BUFFER must be between 0 and 1")
 
     try:
-        from datetime import datetime
-
         datetime.strptime(TIMELAPSE_CREATION_TIME, "%H:%M")
     except ValueError:
         errors.append("TIMELAPSE_CREATION_TIME must be in HH:MM format")
 
+    for name, value in [
+        ("FETCH_START_HOUR", FETCH_START_HOUR),
+        ("FETCH_END_HOUR", FETCH_END_HOUR),
+    ]:
+        try:
+            datetime.strptime(value, "%H:%M")
+        except ValueError:
+            errors.append(f"{name} must be in HH:MM format")
+            
     return errors
 
 

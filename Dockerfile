@@ -12,7 +12,6 @@ ENV UNIFI_PROTECT_TIME_LAPSE_VERSION=$VERSION \
 # Install system dependencies in a single cached layer
 # This layer will be cached unless Alpine base image changes
 RUN apk add --no-cache \
-    python3 \
     python3-dev \
     py3-pip \
     py3-setuptools \

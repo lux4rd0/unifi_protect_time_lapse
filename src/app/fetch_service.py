@@ -43,6 +43,34 @@ class FetchService:
             f"Fetch service initialized with intervals: {config.FETCH_INTERVALS}"
         )
 
+    def _is_within_fetch_window(self, current_time: datetime) -> bool:
+        """Check if the current time is within the configured fetch window."""
+
+        now_time = current_time.time()
+        start = config.FETCH_START_TIME
+        end = config.FETCH_END_TIME
+
+        if start <= end:
+            return start <= now_time <= end
+
+        # Window spans midnight
+        return now_time >= start or now_time <= end
+
+    async def _sleep_until_next_execution(self, interval: int, elapsed_since_start: int):
+        """Sleep until the next scheduled execution time for the interval."""
+
+        next_elapsed = ((elapsed_since_start // interval) + 1) * interval
+        next_timestamp = self.common_start_timestamp + next_elapsed
+        next_execution = datetime.fromtimestamp(next_timestamp)
+
+        sleep_time = (next_execution - datetime.now()).total_seconds()
+        if sleep_time > 0:
+            await asyncio.sleep(sleep_time)
+        elif sleep_time < -interval / 2:
+            logging.warning(
+                f"{interval}s interval is running {-sleep_time:.1f}s behind schedule"
+            )
+
     async def start(self):
         """Start the fetch service."""
         if self.running:
@@ -153,6 +181,14 @@ class FetchService:
                 await asyncio.sleep(1)
                 continue
 
+            if not self._is_within_fetch_window(capture_time):
+                logging.debug(
+                    f"{interval}s: Skipping capture at {capture_time.strftime('%H:%M:%S')} "
+                    f"outside window {config.FETCH_START_HOUR}-{config.FETCH_END_HOUR}"
+                )
+                await self._sleep_until_next_execution(interval, elapsed_since_start)
+                continue
+
             try:
                 # Determine capture method based on camera distribution setting
                 cameras = await self.camera_manager.get_cameras()
@@ -184,19 +220,8 @@ class FetchService:
                 self.stats[interval]["failed_captures"] += 1
 
             # Calculate next execution time (maintain perfect timing from start)
-            next_elapsed = ((elapsed_since_start // interval) + 1) * interval
-            next_timestamp = self.common_start_timestamp + next_elapsed
-            next_execution = datetime.fromtimestamp(next_timestamp)
+            await self._sleep_until_next_execution(interval, elapsed_since_start)
 
-            # Sleep until next execution
-            sleep_time = (next_execution - datetime.now()).total_seconds()
-            if sleep_time > 0:
-                await asyncio.sleep(sleep_time)
-            elif sleep_time < -interval / 2:
-                # We're running significantly behind, log warning but continue
-                logging.warning(
-                    f"{interval}s interval is running {-sleep_time:.1f}s behind schedule"
-                )
 
     async def _run_summary(self):
         """Run periodic summary logging."""

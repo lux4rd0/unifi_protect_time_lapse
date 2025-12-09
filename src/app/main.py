@@ -121,7 +121,9 @@ def print_configuration():
     logging.info(f"Fetch Enabled: {config.FETCH_ENABLED}")
     logging.info(f"Top of Minute Alignment: {config.FETCH_TOP_OF_THE_MINUTE}")
     logging.info(f"Max Retries: {config.FETCH_MAX_RETRIES}")
-
+    logging.info(
+        f"Fetch Window: {config.FETCH_START_HOUR} - {config.FETCH_END_HOUR}"
+    )
     # Camera distribution settings
     logging.info("=" * 50)
     logging.info("CAMERA DISTRIBUTION")
